@@ -40,4 +40,4 @@ select = ["E", "F", "I", "UP", "B"]
 known-first-party = ["rfea_core", "rfea_ml"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/rfea_core/tests"]
+testpaths = ["packages/rfea_core/tests", "ml/tests"]
