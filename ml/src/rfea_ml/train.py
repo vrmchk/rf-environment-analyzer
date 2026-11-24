@@ -102,8 +102,14 @@ def fit(
 
 
 def evaluate(logits: np.ndarray, y: np.ndarray, snr: np.ndarray, classes: tuple[str, ...]) -> dict:
+    """Metrics of a model that outputs logits (prediction = argmax)."""
+    return evaluate_predictions(logits.argmax(1), y, snr, classes)
+
+
+def evaluate_predictions(
+    pred: np.ndarray, y: np.ndarray, snr: np.ndarray, classes: tuple[str, ...]
+) -> dict:
     """Accuracy per SNR, confusion matrices per SNR, per-class P/R/F1 (all SNR and SNR >= 10)."""
-    pred = logits.argmax(1)
     labels = list(range(len(classes)))
     snrs = sorted(int(s) for s in np.unique(snr))
 

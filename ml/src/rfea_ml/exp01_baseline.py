@@ -21,7 +21,6 @@ import time
 from functools import partial
 from pathlib import Path
 
-import matplotlib
 import numpy as np
 import torch
 
@@ -29,27 +28,10 @@ from rfea_core import SpectrogramCNN, StftConfig, log_spectrogram
 from rfea_ml import radioml
 from rfea_ml.baselines import OSheaCNN
 from rfea_ml.paths import git_commit, output_dir
+from rfea_ml.plots import load_metrics, plot_accuracy_vs_snr, plot_confusions, summary_table
 from rfea_ml.train import TrainConfig, evaluate, fit, predict_logits
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-
 RUNS = ("spec_n16", "spec_n32", "spec_n64", "oshea_iq")
-LABELS = {
-    "spec_n16": "Spectrogram CNN, window 16",
-    "spec_n32": "Spectrogram CNN, window 32",
-    "spec_n64": "Spectrogram CNN, window 64",
-    "oshea_iq": "IQ CNN (O'Shea et al.)",
-}
-# Categorical slots 1-4 of the validated reference palette (light mode),
-# plus marker and line style so series are not distinguished by color alone.
-STYLE = {
-    "spec_n16": dict(color="#2a78d6", marker="o", linestyle="-"),
-    "spec_n32": dict(color="#eb6834", marker="s", linestyle="-"),
-    "spec_n64": dict(color="#1baf7a", marker="^", linestyle="-"),
-    "oshea_iq": dict(color="#eda100", marker="D", linestyle="--"),
-}
-INK, INK_2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 
 def build(run: str, n_classes: int):
@@ -123,78 +105,16 @@ def run_one(run: str, data: radioml.RadioML, split, device: torch.device, cfg: T
     )
 
 
-def _style_axes(ax) -> None:
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(INK_2)
-    ax.tick_params(colors=INK_2)
-    ax.grid(True, color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-
-
 def plot_summary() -> None:
     exp = exp_dir()
-    metrics = {}
-    for run in RUNS:
-        path = exp / run / "metrics.json"
-        if path.exists():
-            metrics[run] = json.loads(path.read_text())
+    metrics = load_metrics({run: exp / run / "metrics.json" for run in RUNS})
     if not metrics:
         return
-
-    # Accuracy vs SNR.
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
-    for run, m in metrics.items():
-        snrs = [int(s) for s in m["accuracy_by_snr"]]
-        acc = [100 * v for v in m["accuracy_by_snr"].values()]
-        ax.plot(snrs, acc, label=LABELS[run], linewidth=2, markersize=5, **STYLE[run])
-    ax.set_xlabel("SNR, dB", color=INK)
-    ax.set_ylabel("Accuracy, %", color=INK)
-    ax.set_title("RadioML 2016.10A: test accuracy vs SNR", color=INK, loc="left")
-    ax.set_ylim(0, 100)
-    ax.set_xticks(range(-20, 20, 2))
-    _style_axes(ax)
-    ax.legend(frameon=False, labelcolor=INK, loc="upper left")
-    fig.tight_layout()
-    fig.savefig(exp / "accuracy_vs_snr.png")
-    plt.close(fig)
-
-    # Confusion matrices at SNR >= 10 dB, row-normalized (recall per true class).
-    n = len(metrics)
-    fig, axes = plt.subplots(1, n, figsize=(4.6 * n, 4.8), dpi=150, squeeze=False)
-    for ax, (run, m) in zip(axes[0], metrics.items(), strict=True):
-        cm = sum(np.array(c) for s, c in m["confusion_by_snr"].items() if int(s) >= 10)
-        cm = cm / cm.sum(1, keepdims=True)
-        ax.imshow(cm, cmap="Blues", vmin=0, vmax=1)
-        classes = m["classes"]
-        ax.set_xticks(range(len(classes)), classes, rotation=90, fontsize=7, color=INK_2)
-        ax.set_yticks(range(len(classes)), classes, fontsize=7, color=INK_2)
-        for i in range(len(classes)):
-            for j in range(len(classes)):
-                if cm[i, j] >= 0.05:
-                    ax.text(j, i, f"{100 * cm[i, j]:.0f}", ha="center", va="center",
-                            fontsize=6, color="white" if cm[i, j] > 0.5 else INK)  # fmt: skip
-        ax.set_title(f"{LABELS[run]}\nSNR ≥ 10 dB", fontsize=9, color=INK)
-        ax.set_xlabel("Predicted", fontsize=8, color=INK)
-        ax.set_ylabel("True", fontsize=8, color=INK)
-    fig.tight_layout()
-    fig.savefig(exp / "confusion_snr_ge_10.png")
-    plt.close(fig)
-
-    # Summary table.
-    rows = ["| Run | Params | Epochs | All SNR | SNR ≥ 0 | SNR ≥ 10 | Peak (SNR) | Train, min |",
-            "|---|---|---|---|---|---|---|---|"]  # fmt: skip
-    for run, m in metrics.items():
-        peak_snr, peak = max(m["accuracy_by_snr"].items(), key=lambda kv: kv[1])
-        rows.append(
-            f"| {run} | {m['n_params']:,} | {m['epochs']} (best {m['best_epoch']}) | "
-            f"{100 * m['accuracy_overall']:.1f} | {100 * m['accuracy_snr_ge_0']:.1f} | "
-            f"{100 * m['accuracy_snr_ge_10']:.1f} | {100 * peak:.1f} ({peak_snr}) | "
-            f"{m['train_seconds'] / 60:.1f} |"
-        )
-    (exp / "summary.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
-    print("\n".join(rows))
+    plot_accuracy_vs_snr(metrics, exp / "accuracy_vs_snr.png")
+    plot_confusions(metrics, exp / "confusion_snr_ge_10.png")
+    table = summary_table(metrics)
+    (exp / "summary.md").write_text(table, encoding="utf-8")
+    print(table)
 
 
 def main() -> None:
