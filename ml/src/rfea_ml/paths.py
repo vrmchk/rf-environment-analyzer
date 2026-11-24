@@ -1,8 +1,10 @@
 """Locations of datasets and experiment outputs.
 
-Datasets live outside the repository so that the main checkout and every git
-worktree share one copy. Override with the RFEA_DATA_DIR environment variable;
-by default it is a `data` folder next to the main checkout.
+Datasets and raw experiment outputs (models, logits, metrics, plots) live outside
+the repository, so that the main checkout and every git worktree share one copy
+and outputs survive removing a worktree. Override with the RFEA_DATA_DIR and
+RFEA_OUTPUT_DIR environment variables; by default they are the `data` and
+`outputs` folders next to the main checkout.
 """
 
 import os
@@ -10,7 +12,6 @@ import subprocess
 from pathlib import Path
 
 ML_DIR = Path(__file__).resolve().parents[2]
-OUTPUTS_DIR = ML_DIR / "outputs"
 
 
 def _main_checkout() -> Path:
@@ -25,14 +26,22 @@ def _main_checkout() -> Path:
     return Path(out.stdout.strip()).parent
 
 
-def data_dir() -> Path:
-    env = os.environ.get("RFEA_DATA_DIR")
+def _shared_dir(env_var: str, name: str) -> Path:
+    env = os.environ.get(env_var)
     if env:
         return Path(env)
     try:
-        return _main_checkout().parent / "data"
+        return _main_checkout().parent / name
     except (OSError, subprocess.CalledProcessError) as e:
-        raise RuntimeError("Cannot locate the data folder; set RFEA_DATA_DIR") from e
+        raise RuntimeError(f"Cannot locate the {name} folder; set {env_var}") from e
+
+
+def data_dir() -> Path:
+    return _shared_dir("RFEA_DATA_DIR", "data")
+
+
+def output_dir() -> Path:
+    return _shared_dir("RFEA_OUTPUT_DIR", "outputs")
 
 
 def git_commit() -> str:

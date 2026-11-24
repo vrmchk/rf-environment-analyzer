@@ -6,9 +6,10 @@ Runs:
       hop = n_fft / 4, resized to 64x64), window length 16 / 32 / 64 samples;
   oshea_iq - OSheaCNN on raw IQ samples.
 
-Each run uses the same stratified 60/20/20 split. Outputs go to ml/outputs/exp01/<run>/:
-model.pt, history.json, metrics.json, logits.npz (val and test logits, kept for the
-calibration and decision accumulation experiments), plus summary plots in ml/outputs/exp01/.
+Each run uses the same stratified 60/20/20 split. Outputs go to <output_dir>/exp01/<run>/
+(see rfea_ml.paths): model.pt, history.json, metrics.json, logits.npz (val and test
+logits, kept for the calibration and decision accumulation experiments), plus summary
+plots in <output_dir>/exp01/.
 
 Usage: uv run python -m rfea_ml.exp01_baseline [--runs spec_n16 oshea_iq] [--plot-only]
 """
@@ -18,6 +19,7 @@ import json
 import sys
 import time
 from functools import partial
+from pathlib import Path
 
 import matplotlib
 import numpy as np
@@ -26,13 +28,12 @@ import torch
 from rfea_core import SpectrogramCNN, StftConfig, log_spectrogram
 from rfea_ml import radioml
 from rfea_ml.baselines import OSheaCNN
-from rfea_ml.paths import OUTPUTS_DIR, git_commit
+from rfea_ml.paths import git_commit, output_dir
 from rfea_ml.train import TrainConfig, evaluate, fit, predict_logits
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-EXP_DIR = OUTPUTS_DIR / "exp01"
 RUNS = ("spec_n16", "spec_n32", "spec_n64", "oshea_iq")
 LABELS = {
     "spec_n16": "Spectrogram CNN, window 16",
@@ -68,9 +69,13 @@ def build(run: str, n_classes: int):
     return SpectrogramCNN(n_classes), partial(log_spectrogram, cfg=cfg), params
 
 
+def exp_dir() -> Path:
+    return output_dir() / "exp01"
+
+
 def run_one(run: str, data: radioml.RadioML, split, device: torch.device, cfg: TrainConfig):
     train, val, test = split
-    out = EXP_DIR / run
+    out = exp_dir() / run
     out.mkdir(parents=True, exist_ok=True)
 
     x = torch.from_numpy(data.x).to(device)
@@ -129,9 +134,10 @@ def _style_axes(ax) -> None:
 
 
 def plot_summary() -> None:
+    exp = exp_dir()
     metrics = {}
     for run in RUNS:
-        path = EXP_DIR / run / "metrics.json"
+        path = exp / run / "metrics.json"
         if path.exists():
             metrics[run] = json.loads(path.read_text())
     if not metrics:
@@ -151,7 +157,7 @@ def plot_summary() -> None:
     _style_axes(ax)
     ax.legend(frameon=False, labelcolor=INK, loc="upper left")
     fig.tight_layout()
-    fig.savefig(EXP_DIR / "accuracy_vs_snr.png")
+    fig.savefig(exp / "accuracy_vs_snr.png")
     plt.close(fig)
 
     # Confusion matrices at SNR >= 10 dB, row-normalized (recall per true class).
@@ -173,7 +179,7 @@ def plot_summary() -> None:
         ax.set_xlabel("Predicted", fontsize=8, color=INK)
         ax.set_ylabel("True", fontsize=8, color=INK)
     fig.tight_layout()
-    fig.savefig(EXP_DIR / "confusion_snr_ge_10.png")
+    fig.savefig(exp / "confusion_snr_ge_10.png")
     plt.close(fig)
 
     # Summary table.
@@ -187,7 +193,7 @@ def plot_summary() -> None:
             f"{100 * m['accuracy_snr_ge_10']:.1f} | {100 * peak:.1f} ({peak_snr}) | "
             f"{m['train_seconds'] / 60:.1f} |"
         )
-    (EXP_DIR / "summary.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    (exp / "summary.md").write_text("\n".join(rows) + "\n", encoding="utf-8")
     print("\n".join(rows))
 
 
