@@ -1,0 +1,43 @@
+# Virtual workspace root: shared tooling config, torch sources and the single lock file.
+# Install everything for development with: uv sync --all-packages
+
+[tool.uv.workspace]
+members = ["ml", "packages/rfea_core"]
+
+[tool.uv]
+# Lock only for the platforms we use: Windows (training on GPU) and Linux (backend in Docker).
+environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
+
+[tool.uv.sources]
+rfea-core = { workspace = true }
+# CUDA build on Windows (GTX 1650, sm_75), CPU build on Linux (backend image).
+torch = [
+    { index = "pytorch-cu134", marker = "sys_platform == 'win32'" },
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu134"
+url = "https://download.pytorch.org/whl/cu134"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[dependency-groups]
+dev = ["pytest>=9", "ruff>=0.14"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rfea_core", "rfea_ml"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/rfea_core/tests"]
