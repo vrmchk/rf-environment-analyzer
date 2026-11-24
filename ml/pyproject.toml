@@ -1,0 +1,15 @@
+[project]
+name = "rfea-ml"
+version = "0.1.0"
+description = "Offline experiments, training and evaluation of the modulation classifier"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "rfea-core",
+    "numpy>=2.3",
+    "matplotlib>=3.10",
+    "scikit-learn>=1.7",
+]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
