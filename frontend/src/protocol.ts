@@ -51,7 +51,28 @@ export interface TracksMessage {
   tracks: TrackItem[]
 }
 
-export type JsonMessage = SessionStarted | SessionEnded | ErrorMessage | TracksMessage
+// A log entry (FR-10): written when the stopping rule decides or the signal is lost.
+export interface EventMessage {
+  type: 'event'
+  session_id: string
+  track_id: number
+  status: 'identified' | 'unknown'
+  label: string | null
+  confidence: number | null
+  n_frames: number
+  detected_at_s: number
+  decided_at_s: number
+  observation_s: number
+  detected_at: string
+  decided_at: string
+  center_freq_hz: number
+  bandwidth_hz: number
+  snr_db: number | null
+  bandwidth_out_of_range: boolean
+}
+
+export type JsonMessage =
+  SessionStarted | SessionEnded | ErrorMessage | TracksMessage | EventMessage
 
 // Waterfall row, MessagePack; `levels` is the 0-255 quantized spectrum.
 export interface Row {

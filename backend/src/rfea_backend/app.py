@@ -11,6 +11,7 @@ from dataclasses import asdict, fields
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from rfea_backend.api import protocol
+from rfea_backend.classify.model import Classifier, ModelError, load_classifier
 from rfea_backend.pipeline import Session, SessionParams
 from rfea_backend.settings import Settings
 from rfea_backend.sources.virtual import VirtualSource, list_scenes
@@ -44,6 +45,12 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
     app = FastAPI(title="RF environment analyzer")
     hub = Hub()
     state: dict = {"session": None}
+    classifier: Classifier | None = None
+    model_error: str | None = None
+    try:  # NFR-8: an incompatible model is not loaded; sessions do not start without one
+        classifier = load_classifier(settings.model_dir)
+    except ModelError as e:
+        model_error = str(e)
 
     def current() -> Session | None:
         s = state["session"]
@@ -52,13 +59,20 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
     @app.get("/api/health")
     def health() -> dict:
         s = current()
-        return {"status": "ok", "session": s.id if s else None}
+        return {
+            "status": "ok" if classifier else "model_error",
+            "model": classifier.describe() if classifier else None,
+            "model_error": model_error,
+            "session": s.id if s else None,
+        }
 
     @app.get("/api/scenes")
     def scenes() -> list[dict]:
         return [asdict(s) for s in list_scenes(settings.scenes_dir)]
 
     def start(msg: dict, loop: asyncio.AbstractEventLoop) -> dict | None:
+        if classifier is None:
+            return protocol.error(f"model not loaded: {model_error}")
         if current() is not None:
             return protocol.error("a session is already running")
         known = {f.name for f in fields(SessionParams)}
@@ -72,7 +86,7 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
         def emit(m: dict | bytes) -> None:
             loop.call_soon_threadsafe(hub.publish, m)
 
-        session = Session(source, source.info.name, params, emit, realtime=realtime)
+        session = Session(source, source.info.name, params, emit, classifier, realtime=realtime)
         state["session"] = session
         hub.publish(session.started_message())
         session.start()
