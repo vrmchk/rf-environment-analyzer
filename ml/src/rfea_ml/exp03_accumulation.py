@@ -141,18 +141,13 @@ def fit_evidence_scale(z: torch.Tensor, y: np.ndarray, temperature: float) -> fl
     return float(log_beta.detach().exp())
 
 
-def analyze(run: str) -> dict:
-    with np.load(output_dir() / "exp01" / run / "logits.npz") as d:
-        val_z, val_y = torch.from_numpy(d["val_logits"]), torch.from_numpy(d["val_y"])
-        test_z = torch.from_numpy(d["test_logits"]).double()
-        test_y, test_snr = d["test_y"], d["test_snr"]
-        val_snr = d["val_snr"]
-
-    # A. Calibration.
+def calibration_report(
+    val_z: torch.Tensor, val_y: torch.Tensor, test_z: torch.Tensor, test_y, test_snr
+) -> tuple[float, dict]:
+    """T* on val logits; NLL, ECE, reliability on test for T = 1 and T* (thesis 3.6)."""
     t_star = fit_temperature(val_z, val_y)
-    temps = {"T=1": 1.0, "T*": t_star}
     calib = {}
-    for name, t in temps.items():
+    for name, t in {"T=1": 1.0, "T*": t_star}.items():
         log_p = calibrated_log_probs(test_z, t)
         conf, pred = log_p.exp().max(1)
         conf, correct = conf.numpy(), (pred.numpy() == test_y)
@@ -177,12 +172,16 @@ def analyze(run: str) -> dict:
                 for m in [(test_snr >= lo) & (test_snr <= hi)]
             },
         }
+    return t_star, calib
 
-    # B. Accumulation over pseudo-sequences.
-    seq = make_sequences(test_y, test_snr)
-    seq_y, seq_snr = test_y[seq[:, 0]], test_snr[seq[:, 0]]
-    z = test_z[torch.from_numpy(seq)]  # (S, K_MAX, M)
 
+def accumulation_report(
+    z: torch.Tensor, seq_y: np.ndarray, seq_snr: np.ndarray, temps: dict[str, float]
+) -> dict:
+    """Accuracy of argmax Lambda_K, ECE of q_K and the stopping rule (thesis 3.7).
+
+    z: (S, K_MAX, M) logits of S frame sequences; seq_y, seq_snr: class and SNR per sequence.
+    """
     accum = {}
     for name, t in temps.items():
         q = accumulate(z, t)
@@ -204,7 +203,7 @@ def analyze(run: str) -> dict:
             },
             "stopping": {},
         }
-        if name == "T=1":  # argmax Lambda_K does not depend on T
+        if "accuracy_by_k" not in accum:  # argmax Lambda_K does not depend on T
             accum["accuracy_by_k"] = {
                 k: {
                     "by_snr": _by_snr(correct[:, k - 1], seq_snr),
@@ -228,6 +227,24 @@ def analyze(run: str) -> dict:
                 "by_snr": {int(s): stats(seq_snr == s) for s in np.unique(seq_snr)},
             }
         accum[name] = res
+    return accum
+
+
+def analyze(run: str) -> dict:
+    with np.load(output_dir() / "exp01" / run / "logits.npz") as d:
+        val_z, val_y = torch.from_numpy(d["val_logits"]), torch.from_numpy(d["val_y"])
+        test_z = torch.from_numpy(d["test_logits"]).double()
+        test_y, test_snr = d["test_y"], d["test_snr"]
+        val_snr = d["val_snr"]
+
+    # A. Calibration.
+    t_star, calib = calibration_report(val_z, val_y, test_z, test_y, test_snr)
+
+    # B. Accumulation over pseudo-sequences.
+    seq = make_sequences(test_y, test_snr)
+    seq_y, seq_snr = test_y[seq[:, 0]], test_snr[seq[:, 0]]
+    z = test_z[torch.from_numpy(seq)]  # (S, K_MAX, M)
+    accum = accumulation_report(z, seq_y, seq_snr, {"T=1": 1.0, "T*": t_star})
 
     # Diagnostic (not part of the method): one factor beta on the accumulated evidence,
     # q_K = softmax(beta * Lambda_K), fitted on val pseudo-sequences.
