@@ -15,6 +15,11 @@ torch = [
     { index = "pytorch-cu134", marker = "sys_platform == 'win32'" },
     { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
 ]
+# torchaudio (needed by torchsig) must come from the same index as torch.
+torchaudio = [
+    { index = "pytorch-cu134", marker = "sys_platform == 'win32'" },
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu134"
