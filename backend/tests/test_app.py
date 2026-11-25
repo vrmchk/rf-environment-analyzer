@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from fastapi.testclient import TestClient
 
@@ -25,16 +27,27 @@ def test_session_streams_rows_until_the_scene_ends(scenes_dir) -> None:
         started = ws.receive_json()
         assert started["type"] == "session_started"
         assert started["params"]["gamma_db"] == 3
-        rows = []
+        rows, tracks = [], []
         while True:
             msg = ws.receive()
             if msg.get("bytes") is not None:
                 rows.append(decode(msg["bytes"]))
                 continue
-            ended = __import__("json").loads(msg["text"])
+            m = json.loads(msg["text"])
+            if m["type"] == "tracks":
+                tracks.append(m)
+                continue
+            ended = m
             break
         assert ended["type"] == "session_ended"
         assert ended["reason"] == "finished"
+        assert [m["row"] for m in tracks] == list(range(6))
+        # the tone is confirmed as a track from the third row (min_rows = 3)
+        assert tracks[1]["tracks"] == []
+        [box] = tracks[-1]["tracks"]
+        assert box["f_lo_hz"] < 100.1e6 < box["f_hi_hz"]
+        assert box["f_hi_hz"] - box["f_lo_hz"] < 10e3
+        assert box["state"] == "observing" and box["t0"] == 0
         assert [r["row"] for r in rows] == list(range(6))
         r = rows[-1]
         assert r["n"] == 1024 and len(r["levels"]) == 1024

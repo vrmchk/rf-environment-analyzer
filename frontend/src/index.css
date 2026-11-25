@@ -38,9 +38,19 @@ select {
   gap: 6px;
 }
 
-.waterfall canvas {
-  width: 100%;
+.waterfall-stack {
+  position: relative;
   height: 60vh;
+}
+
+.waterfall-stack canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.waterfall-stack canvas:first-child {
   image-rendering: pixelated;
   background: #000;
 }

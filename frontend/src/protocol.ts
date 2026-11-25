@@ -30,7 +30,28 @@ export interface ErrorMessage {
   message: string
 }
 
-export type JsonMessage = SessionStarted | SessionEnded | ErrorMessage
+export type TrackState = 'observing' | 'identified' | 'unknown'
+
+// A frame on the display; t0 is the scene time of its first row.
+export interface TrackItem {
+  id: number
+  f_lo_hz: number
+  f_hi_hz: number
+  t0: number
+  state: TrackState
+  label: string | null
+  confidence: number | null
+  n_frames: number
+}
+
+export interface TracksMessage {
+  type: 'tracks'
+  row: number
+  t: number
+  tracks: TrackItem[]
+}
+
+export type JsonMessage = SessionStarted | SessionEnded | ErrorMessage | TracksMessage
 
 // Waterfall row, MessagePack; `levels` is the 0-255 quantized spectrum.
 export interface Row {

@@ -41,6 +41,18 @@ class Row:
         )
 
 
+def bins_to_hz(k1: int, k2: int, n: int, f0_hz: float, fs_hz: float) -> tuple[float, float]:
+    """Edges of bins k1..k2 (inclusive) of an n-point spectrum centered at f0."""
+    df = fs_hz / n
+    return f0_hz + (k1 - n / 2 - 0.5) * df, f0_hz + (k2 - n / 2 + 0.5) * df
+
+
+def tracks(row: int, t: float, items: list[dict]) -> dict:
+    """Frames on the display after this row; items: id, f_lo_hz, f_hi_hz, t0, state,
+    label, confidence, n_frames."""
+    return {"type": "tracks", "row": row, "t": t, "tracks": items}
+
+
 def decode(data: bytes) -> dict:
     return msgpack.unpackb(data, raw=False)
 
