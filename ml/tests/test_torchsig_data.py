@@ -1,8 +1,11 @@
 import numpy as np
 import pytest
+import torch
 
+from rfea_core import occupied_bandwidth
 from rfea_ml.torchsig_data import (
     FRAME_LEN,
+    MARGIN,
     RECORD_LEN,
     GenConfig,
     Impairments,
@@ -11,6 +14,7 @@ from rfea_ml.torchsig_data import (
     generate_class,
     impair,
     split_by_record,
+    to_measured,
 )
 
 
@@ -64,3 +68,23 @@ def test_generate_class_respects_bandwidth_range(name: str) -> None:
     cfg = GenConfig(snrs=(10,), bandwidth=(0.10, 0.20))
     bw = generate_class(0, (name,), 8, cfg)["bandwidth"]
     assert np.all((bw >= 0.10) & (bw <= 0.20))
+
+
+@pytest.mark.parametrize("name", ["qpsk", "fm", "2fsk"])
+def test_generate_class_sets_measured_bandwidth_for_any_class(name: str) -> None:
+    # FM is ~3x narrower than QPSK at the same TorchSig bandwidth; --measured removes that
+    cfg = GenConfig(snrs=(40,), measured=(0.25, 0.25))
+    x = generate_class(0, (name,), 6, cfg)["x"]
+    m = occupied_bandwidth(torch.from_numpy(x)).numpy()
+    assert np.all(np.abs(m - 0.25) < 0.05)  # FM varies with its message
+
+
+def test_to_measured_narrows_and_widens() -> None:
+    rng = np.random.default_rng(0)
+    w = rng.normal(size=20 * RECORD_LEN) + 1j * rng.normal(size=20 * RECORD_LEN)
+    s = np.convolve(w, np.sinc(0.2 * np.arange(-200, 201)), mode="same")  # 0.2 of the rate
+    for target in (0.1, 0.4):
+        y, r = to_measured(s, target)
+        assert y.shape == (RECORD_LEN + MARGIN,)
+        m = float(occupied_bandwidth(torch.from_numpy(y[None].astype(np.complex64)))[0])
+        assert m == pytest.approx(target, abs=0.02)
