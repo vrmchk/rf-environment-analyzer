@@ -43,7 +43,9 @@ export default function App() {
           return
         }
         const msg = JSON.parse(ev.data) as JsonMessage
-        if (msg.type === 'session_started') {
+        if (msg.type === 'tracks') {
+          waterfall.current?.pushTracks(msg)
+        } else if (msg.type === 'session_started') {
           setSession((prev) => {
             if (prev?.session_id !== msg.session_id) waterfall.current?.clear()
             return msg

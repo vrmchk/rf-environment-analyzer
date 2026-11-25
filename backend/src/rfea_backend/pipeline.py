@@ -13,7 +13,10 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 
+from rfea_backend.api import protocol
 from rfea_backend.api.protocol import Row
+from rfea_backend.dsp.detector import DetectorConfig, detect
+from rfea_backend.dsp.tracker import Track, Tracker, TrackerConfig
 from rfea_backend.dsp.waterfall import Waterfall, WaterfallConfig
 from rfea_backend.sources.base import IqSource
 
@@ -106,6 +109,8 @@ class Session:
     def _loop(self) -> None:
         fs, n = self.source.sample_rate, self.wf_cfg.row_samples
         waterfall = Waterfall(self.wf_cfg)
+        detector = DetectorConfig(gamma_db=self.params.gamma_db)
+        tracker = Tracker(TrackerConfig())
         t0 = time.monotonic()
         row = 0
         while not self._stop.is_set():
@@ -123,7 +128,27 @@ class Session:
                 if delay > 0 and self._stop.wait(delay):
                     return
             wall = time.time()
-            _, levels, lo, hi = waterfall.row(block)
-            self.emit(Row(row, end / fs, self.source.center_freq, fs, lo, hi, wall,
-                          levels).encode())  # fmt: skip
+            p_db, levels, lo, hi = waterfall.row(block)
+            t = end / fs
+            self.emit(Row(row, t, self.source.center_freq, fs, lo, hi, wall, levels).encode())
+            noise_db, intervals = detect(p_db, detector)
+            tracker.update(row, intervals, p_db, noise_db)
+            self.emit(protocol.tracks(row, t, [
+                self._track_item(tr, fs) for tr in tracker.active.values()
+                if tracker.confirmed(tr)
+            ]))  # fmt: skip
             row += 1
+
+    def _track_item(self, tr: Track, fs: float) -> dict:
+        n, f0 = self.wf_cfg.n_fft, self.source.center_freq
+        f_lo, f_hi = protocol.bins_to_hz(tr.k1, tr.k2, n, f0, fs)
+        return {
+            "id": tr.id,
+            "f_lo_hz": f_lo,
+            "f_hi_hz": f_hi,
+            "t0": tr.first_row * self.wf_cfg.row_samples / fs,  # start of its first row
+            "state": str(tr.state),
+            "label": tr.label,
+            "confidence": tr.confidence,
+            "n_frames": tr.n_frames,
+        }
