@@ -1,6 +1,7 @@
 import { decode } from '@msgpack/msgpack'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Command, JsonMessage, Row, Scene, SessionStarted } from './protocol'
+import { EventLog } from './EventLog'
+import type { Command, EventMessage, JsonMessage, Row, Scene, SessionStarted } from './protocol'
 import { Waterfall, type WaterfallHandle } from './Waterfall'
 
 type Status = 'disconnected' | 'idle' | 'running' | 'paused'
@@ -12,6 +13,7 @@ export default function App() {
   const [scene, setScene] = useState('')
   const [status, setStatus] = useState<Status>('disconnected')
   const [session, setSession] = useState<SessionStarted | null>(null)
+  const [events, setEvents] = useState<EventMessage[]>([])
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -45,9 +47,14 @@ export default function App() {
         const msg = JSON.parse(ev.data) as JsonMessage
         if (msg.type === 'tracks') {
           waterfall.current?.pushTracks(msg)
+        } else if (msg.type === 'event') {
+          setEvents((prev) => [msg, ...prev].slice(0, 500))
         } else if (msg.type === 'session_started') {
           setSession((prev) => {
-            if (prev?.session_id !== msg.session_id) waterfall.current?.clear()
+            if (prev?.session_id !== msg.session_id) {
+              waterfall.current?.clear()
+              setEvents([])
+            }
             return msg
           })
           setStatus(msg.paused ? 'paused' : 'running')
@@ -109,6 +116,7 @@ export default function App() {
         </span>
       </header>
       <Waterfall ref={waterfall} rowsPerS={session?.rows_per_s ?? 20} />
+      <EventLog events={events} />
     </div>
   )
 }

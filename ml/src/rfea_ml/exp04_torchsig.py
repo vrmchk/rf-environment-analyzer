@@ -47,6 +47,7 @@ from rfea_core import (
     log_spectrogram,
     occupied_bandwidth,
 )
+from rfea_core.bandwidth import SEGMENT
 from rfea_ml import torchsig_data as tsd
 from rfea_ml.exp03_accumulation import (
     K_MAX,
@@ -221,9 +222,11 @@ def measured_bandwidth(rec: tsd.Records) -> dict:
         for g, names in BANDWIDTH_GROUPS.items()
     }
     return {
-        "definition": f"fewest FFT bins holding {POWER_FRACTION:.0%} of the power, "
-        f"fraction of the sample rate; test records, SNR >= {MEASURED_MIN_SNR} dB",
+        "definition": f"fewest bins of the averaged power spectrum (Welch, {SEGMENT}-sample "
+        f"Hann segments) holding {POWER_FRACTION:.0%} of the power, fraction of the sample "
+        f"rate; test records, SNR >= {MEASURED_MIN_SNR} dB",
         "power_fraction": POWER_FRACTION,
+        "segment": SEGMENT,
         "all": _quantiles(bw),
         "by_group": groups,
         "groups": {g: list(names) for g, names in BANDWIDTH_GROUPS.items()},
