@@ -30,7 +30,49 @@ export interface ErrorMessage {
   message: string
 }
 
-export type JsonMessage = SessionStarted | SessionEnded | ErrorMessage
+export type TrackState = 'observing' | 'identified' | 'unknown'
+
+// A frame on the display; t0 is the scene time of its first row.
+export interface TrackItem {
+  id: number
+  f_lo_hz: number
+  f_hi_hz: number
+  t0: number
+  state: TrackState
+  label: string | null
+  confidence: number | null
+  n_frames: number
+}
+
+export interface TracksMessage {
+  type: 'tracks'
+  row: number
+  t: number
+  tracks: TrackItem[]
+}
+
+// A log entry (FR-10): written when the stopping rule decides or the signal is lost.
+export interface EventMessage {
+  type: 'event'
+  session_id: string
+  track_id: number
+  status: 'identified' | 'unknown'
+  label: string | null
+  confidence: number | null
+  n_frames: number
+  detected_at_s: number
+  decided_at_s: number
+  observation_s: number
+  detected_at: string
+  decided_at: string
+  center_freq_hz: number
+  bandwidth_hz: number
+  snr_db: number | null
+  bandwidth_out_of_range: boolean
+}
+
+export type JsonMessage =
+  SessionStarted | SessionEnded | ErrorMessage | TracksMessage | EventMessage
 
 // Waterfall row, MessagePack; `levels` is the 0-255 quantized spectrum.
 export interface Row {
@@ -52,6 +94,17 @@ export interface Scene {
   center_freq: number
   duration_s: number
   n_signals: number
+}
+
+// GET /api/sessions
+export interface SessionSummary {
+  id: string
+  scene: string
+  started_at: string
+  ended_at: string | null
+  end_reason: 'finished' | 'stopped' | 'error' | null
+  n_events: number
+  params: Record<string, number>
 }
 
 export type Command =

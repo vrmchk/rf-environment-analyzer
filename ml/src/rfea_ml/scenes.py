@@ -11,7 +11,7 @@ record of rfea_ml.torchsig_data, so the classifier sees the same domain:
      in SceneConfig.bandwidth_hz;
   4. shift to a free frequency channel and placement in a random time interval;
   5. power set for the SNR the classifier will see: SNR over the band f_s' = measured
-     bandwidth / 0.22, the rate the backend decimates to (method.md, section 1), with the
+     bandwidth / 0.285, the rate the backend decimates to (method.md, section 1), with the
      scene noise of unit power over SCENE_FS. So annotation SNRs are on the same scale
      as the experiment 04 tables.
 
@@ -44,7 +44,7 @@ from rfea_ml.paths import data_dir, git_commit
 from rfea_ml.radioml import CLASSES
 
 SCENE_FS = 1e6
-DECIMATION_FRACTION = 0.22  # measured bandwidth / f_s' (classifier.json, method.md)
+DECIMATION_FRACTION = 0.285  # median measured bandwidth / f_s' (system model, classifier.json)
 N_CHANNELS = 8  # 125 kHz each at 1 MHz
 OOD_SCENE_CLASSES = ("ofdm-64", "lfm-data")
 RAMP_S = 1e-3  # raised-cosine on/off ramp of a burst
