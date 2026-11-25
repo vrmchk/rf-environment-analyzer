@@ -44,7 +44,10 @@ from rfea_ml.paths import data_dir, git_commit
 from rfea_ml.radioml import CLASSES
 
 SCENE_FS = 1e6
-DECIMATION_FRACTION = 0.285  # median measured bandwidth / f_s' (system model, classifier.json)
+# Median measured bandwidth / f_s' of the model the scenes demo, eval1-eval4 were made for
+# (exp04); kept so they regenerate identically. The system model has 0.316: the classifier
+# sees a 10 lg(0.316 / 0.285) = 0.45 dB lower SNR than annotated.
+DECIMATION_FRACTION = 0.285
 N_CHANNELS = 8  # 125 kHz each at 1 MHz
 OOD_SCENE_CLASSES = ("ofdm-64", "lfm-data")
 RAMP_S = 1e-3  # raised-cosine on/off ramp of a burst

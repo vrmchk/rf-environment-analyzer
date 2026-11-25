@@ -1,11 +1,12 @@
 """Narrowband signal of a frame: bandwidth estimate, shift, low-pass, decimation, frames.
 
 The classifier was trained on signals whose measured bandwidth (90 % of the power) is a
-known share of the sample rate, median 0.22 (classifier.json). So for a tracked signal:
+known share b of the sample rate: the median measured_bandwidth_fraction in classifier.json
+(0.316 for the system model). So for a tracked signal:
   1. its measured bandwidth is estimated from the track's averaged power spectrum with the
      noise level subtracted, by the same rule (rfea_core.occupied_fraction), over the frame
      widened by half its width on each side;
-  2. the target rate is f_s' = bandwidth / 0.22; the decimation factor D = round(fs / f_s');
+  2. the target rate is f_s' = bandwidth / b; the decimation factor D = round(fs / f_s');
   3. a frame of 128 output samples is cut: the input is shifted by the power centroid of the
      signal (an SSB signal is not centered on its frame), low-pass filtered (windowed sinc,
      63 taps, cut-off f_s'/2) and every D-th sample is kept.
