@@ -17,10 +17,15 @@ B. Accumulation, the main comparison, on the same model and test records:
 C. Unknown signals: the first K_MAX frames of each OOD record (4 classes outside the
    training set, test only); share of "unknown" vs tau and what the decided ones were called.
 
-Outputs in <output_dir>/exp04/: spec_n32/ (model.pt, history.json, logits.npz,
-classifier.json for the backend), metrics.json, summary.md, plots.
+Data set: --dataset names the folder in <data_dir> (default torchsig, signal bandwidth
+0.15-0.5 of the sample rate); the bandwidth range is read from its config.json and written
+to classifier.json, so the backend decimates a detected signal into the same range.
 
-Usage: uv run python -m rfea_ml.exp04_torchsig [--analyze-only]
+Outputs in <output_dir>/exp04/ for the default data set, <output_dir>/exp04_<suffix>/ for
+torchsig_<suffix> (e.g. torchsig_narrow -> exp04_narrow): spec_n32/ (model.pt,
+history.json, logits.npz, classifier.json for the backend), metrics.json, summary.md, plots.
+
+Usage: uv run python -m rfea_ml.exp04_torchsig [--dataset torchsig] [--analyze-only]
 """
 
 import argparse
@@ -62,8 +67,11 @@ SEED = 0
 RUN = "spec_n32"
 
 
-def exp_dir() -> Path:
-    return output_dir() / "exp04"
+def exp_dir(dataset: str = tsd.DEFAULT_NAME) -> Path:
+    """exp04 for the default data set, exp04_<suffix> for torchsig_<suffix> (or <name>)."""
+    if dataset == tsd.DEFAULT_NAME:
+        return output_dir() / "exp04"
+    return output_dir() / f"exp04_{dataset.removeprefix(tsd.DEFAULT_NAME + '_')}"
 
 
 def frame_starts(n_records: int, rng: np.random.Generator) -> np.ndarray:
@@ -92,11 +100,11 @@ def all_frames_logits(model, rec: tsd.Records, count: int, transform, device) ->
     return np.concatenate(out)
 
 
-def train(device: torch.device) -> None:
-    out = exp_dir() / RUN
+def train(device: torch.device, dataset: str = tsd.DEFAULT_NAME) -> None:
+    out = exp_dir(dataset) / RUN
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(SEED)
-    parts = {p: sampled_frames(tsd.load(p), rng) for p in ("train", "val", "test")}
+    parts = {p: sampled_frames(tsd.load(p, dataset), rng) for p in ("train", "val", "test")}
     stft = StftConfig(n_fft=N_FFT)
     transform = partial(log_spectrogram, cfg=stft)
 
@@ -114,9 +122,9 @@ def train(device: torch.device) -> None:
     logits = {p: predict_logits(model, dev[p][0], transform).cpu().numpy() for p in ("val", "test")}
     model.eval()
     test_seq = all_frames_logits(
-        model, tsd.load("test"), tsd.RECORD_LEN // tsd.FRAME_LEN, transform, device
+        model, tsd.load("test", dataset), tsd.RECORD_LEN // tsd.FRAME_LEN, transform, device
     )
-    ood_seq = all_frames_logits(model, tsd.load("ood_test"), K_MAX, transform, device)
+    ood_seq = all_frames_logits(model, tsd.load("ood_test", dataset), K_MAX, transform, device)
     np.savez(
         out / "logits.npz",
         val_logits=logits["val"], val_y=parts["val"][1], val_snr=parts["val"][2],
@@ -183,15 +191,16 @@ def ood_report(z: torch.Tensor, names: np.ndarray, snr: np.ndarray, t_star: floa
     return out
 
 
-def analyze() -> dict:
-    out = exp_dir() / RUN
+def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
+    out = exp_dir(dataset) / RUN
     with np.load(out / "logits.npz") as d:
         val_z, val_y = torch.from_numpy(d["val_logits"]), torch.from_numpy(d["val_y"])
         test_z = torch.from_numpy(d["test_logits"]).double()
         test_y, test_snr = d["test_y"], d["test_snr"]
         seq_z = torch.from_numpy(d["test_seq_logits"]).double()  # (records, 32, M)
         ood_z = torch.from_numpy(d["ood_seq_logits"]).double()
-    rec, ood = tsd.load("test"), tsd.load("ood_test")
+    rec, ood = tsd.load("test", dataset), tsd.load("ood_test", dataset)
+    data_cfg = tsd.read_config(dataset)
 
     single = evaluate(test_z.numpy(), test_y, test_snr, tsd.CLASSES)
     t_star, calib = calibration_report(val_z, val_y, test_z, test_y, test_snr)
@@ -208,7 +217,7 @@ def analyze() -> dict:
         "temperature": t_star,
         "frame_len": tsd.FRAME_LEN,
         "stft": {"n_fft": N_FFT, "hop": N_FFT // 4, "window": "hann", "out_size": [64, 64]},
-        "signal_bandwidth_fraction": list(tsd.GenConfig.bandwidth),
+        "signal_bandwidth_fraction": list(data_cfg["config"]["bandwidth"]),
         "model": "SpectrogramCNN",
         "weights": "model.pt",
         "commit": train_info["commit"],
@@ -228,7 +237,8 @@ def analyze() -> dict:
             "k_max": K_MAX,
             "independent_sequences_per_pair": N_SEQUENCES,
             "seed": SEED,
-            "data": json.loads((tsd.dataset_dir() / "config.json").read_text()),
+            "dataset": dataset,
+            "data": data_cfg,
         },
         "commit": git_commit(),
     }
@@ -268,6 +278,10 @@ def summary(m: dict) -> str:
     sf = m["single_frame"]
     lines = [
         "# Experiment 04: TorchSig, correlated vs independent frames",
+        "",
+        f"Data set: {m['settings'].get('dataset', tsd.DEFAULT_NAME)}, signal bandwidth "
+        f"{'-'.join(str(b) for b in m['settings']['data']['config']['bandwidth'])} "
+        "of the sample rate.",
         "",
         f"Training: {m['train']['epochs']} epochs (best {m['train']['best_epoch']}), "
         f"{m['train']['train_seconds'] / 60:.1f} min, frames {m['train']['frames']}.",
@@ -333,15 +347,20 @@ def summary(m: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--analyze-only", action="store_true", help="reuse saved logits")
+    parser.add_argument(
+        "--dataset", default=tsd.DEFAULT_NAME, help="data set folder in <data_dir> (%(default)s)"
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    exp = exp_dir(args.dataset)
     if not args.analyze_only:
+        if (exp / RUN / "model.pt").exists():
+            parser.error(f"{exp / RUN} already holds a trained model; use --analyze-only")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch.backends.cudnn.benchmark = True
-        train(device)
+        train(device, args.dataset)
     torch.set_num_threads(4)
-    m = analyze()
-    exp = exp_dir()
+    m = analyze(args.dataset)
     (exp / "metrics.json").write_text(json.dumps(m, indent=1))
     m = json.loads((exp / "metrics.json").read_text())  # string keys, as the plots expect
     plot_accuracy_vs_snr(m, exp / "accuracy_vs_k.png")

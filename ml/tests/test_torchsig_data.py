@@ -57,3 +57,10 @@ def test_generate_class_is_deterministic_and_alternates_names() -> None:
     assert list(a["snr"]) == [0, 0, 10, 10]
     assert np.all((a["bandwidth"] >= 0.15) & (a["bandwidth"] <= 0.5))
     assert np.array_equal(a["x"], b["x"])
+
+
+@pytest.mark.parametrize("name", ["qpsk", "16qam", "fm", "am-usb"])
+def test_generate_class_respects_bandwidth_range(name: str) -> None:
+    cfg = GenConfig(snrs=(10,), bandwidth=(0.10, 0.20))
+    bw = generate_class(0, (name,), 8, cfg)["bandwidth"]
+    assert np.all((bw >= 0.10) & (bw <= 0.20))

@@ -7,7 +7,8 @@ the same way as consecutive frames of one detected signal in the system.
 
 Generation of one record:
   1. TorchSig builds a clean baseband signal of the class (no noise, no TorchSig
-     impairments); its bandwidth is a random fraction 0.15-0.5 of the sample rate;
+     impairments); its bandwidth is a random fraction of the sample rate, uniform in
+     GenConfig.bandwidth (default 0.15-0.5; --bandwidth changes it);
   2. our impairments, close to the RadioML channel: carrier frequency offset and linear
      drift, initial phase, Wiener phase noise, sample clock offset (see Impairments);
   3. power normalized to 1 and complex white Gaussian noise added so that
@@ -19,10 +20,14 @@ counterparts; AM-SSB alternates am-usb and am-lsb. Four classes outside the trai
 (OOD_CLASSES) are generated for the test only, to check the "unknown" decision.
 
 Split 60/20/20 by record within every (class, SNR) pair, so frames of one signal never
-appear in two parts. Output in <data_dir>/torchsig/: train.npz, val.npz, test.npz,
-ood_test.npz (x complex64 (n, RECORD_LEN), y, snr, bandwidth, tsig_class) and config.json.
+appear in two parts. Output in <data_dir>/<name>/ (default name: torchsig): train.npz,
+val.npz, test.npz, ood_test.npz (x complex64 (n, RECORD_LEN), y, snr, bandwidth,
+tsig_class) and config.json. Different bandwidth ranges go to different names, e.g.
+
+  uv run python -m rfea_ml.torchsig_data --bandwidth 0.10 0.20 --name torchsig_narrow
 
 Usage: uv run python -m rfea_ml.torchsig_data [--records 250] [--workers 4]
+       [--bandwidth LO HI] [--name torchsig]
 """
 
 import argparse
@@ -59,6 +64,7 @@ TORCHSIG_CLASSES = {
 OOD_CLASSES = ("ofdm-64", "lfm-data", "4fsk", "32qam")  # test only: two far, two near
 SAMPLE_RATE = 1e6  # TorchSig needs Hz; everything below is relative to it
 MARGIN = 64  # extra samples generated so that clock-offset resampling stays inside the signal
+DEFAULT_NAME = "torchsig"  # dataset folder in <data_dir>
 
 
 @dataclass(frozen=True)
@@ -82,8 +88,13 @@ class GenConfig:
     impairments: Impairments = field(default_factory=Impairments)
 
 
-def dataset_dir() -> Path:
-    return data_dir() / "torchsig"
+def dataset_dir(name: str = DEFAULT_NAME) -> Path:
+    return data_dir() / name
+
+
+def read_config(name: str = DEFAULT_NAME) -> dict:
+    """config.json written by generate(): GenConfig, counts, commit."""
+    return json.loads((dataset_dir(name) / "config.json").read_text())
 
 
 def _torchsig_generators(names: tuple[str, ...], cfg: GenConfig, seed: int):
@@ -218,9 +229,9 @@ class Records:
     tsig_class: np.ndarray  # (n,) TorchSig class name
 
 
-def load(part: str) -> Records:
-    """part: train, val, test or ood_test."""
-    path = dataset_dir() / f"{part}.npz"
+def load(part: str, name: str = DEFAULT_NAME) -> Records:
+    """part: train, val, test or ood_test; name: dataset folder in <data_dir>."""
+    path = dataset_dir(name) / f"{part}.npz"
     if not path.exists():
         raise FileNotFoundError(f"{path} not found; run: uv run python -m rfea_ml.torchsig_data")
     with np.load(path, allow_pickle=False) as d:
@@ -245,11 +256,22 @@ def main() -> None:
     parser.add_argument("--records", type=int, default=GenConfig.records)
     parser.add_argument("--ood-records", type=int, default=GenConfig.ood_records)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--out", type=Path, default=None, help="default: <data_dir>/torchsig")
+    parser.add_argument(
+        "--bandwidth", type=float, nargs=2, default=GenConfig.bandwidth, metavar=("LO", "HI"),
+        help="signal bandwidth range, fraction of the sample rate (default %(default)s)",
+    )  # fmt: skip
+    parser.add_argument("--name", default=DEFAULT_NAME, help="dataset folder in <data_dir>")
+    parser.add_argument("--out", type=Path, default=None, help="default: <data_dir>/<name>")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    cfg = GenConfig(records=args.records, ood_records=args.ood_records)
-    generate(cfg, args.out or dataset_dir(), args.workers)
+    lo, hi = args.bandwidth
+    if not 0 < lo < hi <= 1:
+        parser.error("--bandwidth needs 0 < LO < HI <= 1")
+    cfg = GenConfig(records=args.records, ood_records=args.ood_records, bandwidth=(lo, hi))
+    out = args.out or dataset_dir(args.name)
+    if (out / "config.json").exists():
+        parser.error(f"{out} already holds a dataset; choose another --name")
+    generate(cfg, out, args.workers)
 
 
 if __name__ == "__main__":
