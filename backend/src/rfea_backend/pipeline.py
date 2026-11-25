@@ -79,6 +79,8 @@ class Session:
         classifier: Classifier | None = None,
         waterfall: WaterfallConfig | None = None,
         realtime: bool = True,
+        on_event: Callable[[dict], None] | None = None,
+        on_end: Callable[[str, str | None], None] | None = None,
     ):
         self.id = str(uuid.uuid4())
         self.scene = scene
@@ -88,6 +90,8 @@ class Session:
         self.classifier = classifier
         self.wf_cfg = waterfall or WaterfallConfig()
         self.realtime = realtime
+        self.on_event = on_event
+        self.on_end = on_end
         self.paused = False
         self.ended: EndReason | None = None
         self.started_wall = time.time()
@@ -96,6 +100,16 @@ class Session:
         self._resume = threading.Event()
         self._resume.set()
         self._thread = threading.Thread(target=self._run, name=f"session-{self.id}", daemon=True)
+
+    def stored_params(self) -> dict:
+        """Everything that shapes the session's results, for the session row (FR-9)."""
+        det, trk = DetectorConfig(gamma_db=self.params.gamma_db), TrackerConfig()
+        return asdict(self.params) | {
+            "merge_gap": det.merge_gap, "min_bins": det.min_bins, "sidelobe_db": det.sidelobe_db,
+            "rho": trk.rho, "max_gap": trk.max_gap, "min_rows": trk.min_rows,
+            "n_fft": self.wf_cfg.n_fft, "row_samples": self.wf_cfg.row_samples,
+            "frames_per_row": FRAMES_PER_ROW,
+        }  # fmt: skip
 
     def started_message(self) -> dict:
         return {
@@ -138,6 +152,11 @@ class Session:
             reason, message = EndReason.ERROR, f"{type(e).__name__}: {e}"
         finally:
             self.source.close()
+        if self.on_end is not None:
+            try:
+                self.on_end(str(reason), message)
+            except Exception as e:  # the end is still announced to clients
+                message = f"{message or ''} (not stored: {type(e).__name__}: {e})".strip()
         self.ended = reason
         self.emit({"type": "session_ended", "session_id": self.id, "reason": str(reason),
                    "error": message})  # fmt: skip
@@ -240,7 +259,7 @@ class Session:
         lo, hi = protocol.bins_to_hz(tr.k1, tr.k2, n, f0, fs)
         band = sig.band
         bw = self.classifier.bandwidth if self.classifier else None
-        self.emit({
+        event = {
             "type": "event",
             "session_id": self.id,
             "track_id": tr.id,
@@ -257,7 +276,10 @@ class Session:
             "bandwidth_hz": band.bandwidth_hz if band else hi - lo,
             "snr_db": sig.snr_db,
             "bandwidth_out_of_range": bool(band and bw and not bw.p05 <= band.fraction <= bw.p95),
-        })  # fmt: skip
+        }  # fmt: skip
+        if self.on_event is not None:
+            self.on_event(event)  # stored before it is shown (NFR-9)
+        self.emit(event)
 
     def _track_item(self, tr: Track, fs: float) -> dict:
         n, f0 = self.wf_cfg.n_fft, self.source.center_freq
