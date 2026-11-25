@@ -45,6 +45,7 @@ from rfea_core import (
     accumulate,
     apply_stopping_rule,
     log_spectrogram,
+    occupied_bandwidth,
 )
 from rfea_ml import torchsig_data as tsd
 from rfea_ml.exp03_accumulation import (
@@ -65,6 +66,15 @@ FRAMES_PER_RECORD = 4
 N_SEQUENCES = 50  # independent sequences per (class, SNR); equals test records per pair
 SEED = 0
 RUN = "spec_n32"
+# Measured bandwidth for the backend's decimation rule (method.md, section 1): 90 % of the
+# power, over test records with SNR >= 10 dB, where noise barely widens the measurement.
+POWER_FRACTION = 0.9
+MEASURED_MIN_SNR = 10
+BANDWIDTH_GROUPS = {
+    "psk_qam": ("8PSK", "BPSK", "QPSK", "QAM16", "QAM64", "PAM4"),  # linear modulations
+    "fsk_fm": ("CPFSK", "GFSK", "WBFM"),
+    "am": ("AM-DSB", "AM-SSB"),
+}
 
 
 def exp_dir(dataset: str = tsd.DEFAULT_NAME) -> Path:
@@ -191,6 +201,35 @@ def ood_report(z: torch.Tensor, names: np.ndarray, snr: np.ndarray, t_star: floa
     return out
 
 
+def _quantiles(bw: np.ndarray) -> dict:
+    p05, p25, p50, p75, p95 = np.percentile(bw, [5, 25, 50, 75, 95])
+    r = partial(round, ndigits=3)
+    return {"median": r(p50), "p25": r(p25), "p75": r(p75), "p05": r(p05), "p95": r(p95),
+            "records": len(bw)}  # fmt: skip
+
+
+def measured_bandwidth(rec: tsd.Records) -> dict:
+    """Occupied bandwidth (fraction of fs) of test records with SNR >= MEASURED_MIN_SNR."""
+    m = rec.snr >= MEASURED_MIN_SNR
+    x, y = rec.x[m], rec.y[m]
+    bw = np.concatenate([
+        occupied_bandwidth(torch.from_numpy(x[i : i + 1000]), POWER_FRACTION).numpy()
+        for i in range(0, len(x), 1000)
+    ])  # fmt: skip
+    groups = {
+        g: _quantiles(bw[np.isin(y, [tsd.CLASSES.index(c) for c in names])])
+        for g, names in BANDWIDTH_GROUPS.items()
+    }
+    return {
+        "definition": f"fewest FFT bins holding {POWER_FRACTION:.0%} of the power, "
+        f"fraction of the sample rate; test records, SNR >= {MEASURED_MIN_SNR} dB",
+        "power_fraction": POWER_FRACTION,
+        "all": _quantiles(bw),
+        "by_group": groups,
+        "groups": {g: list(names) for g, names in BANDWIDTH_GROUPS.items()},
+    }
+
+
 def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
     out = exp_dir(dataset) / RUN
     with np.load(out / "logits.npz") as d:
@@ -212,12 +251,14 @@ def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
     independent = accumulation_report(indep_z, rec.y[r_idx[:, 0]], rec.snr[r_idx[:, 0]], temps)
 
     train_info = json.loads((out / "train.json").read_text())
+    measured = measured_bandwidth(rec)
     classifier = {
         "classes": list(tsd.CLASSES),
         "temperature": t_star,
         "frame_len": tsd.FRAME_LEN,
         "stft": {"n_fft": N_FFT, "hop": N_FFT // 4, "window": "hann", "out_size": [64, 64]},
-        "signal_bandwidth_fraction": list(data_cfg["config"]["bandwidth"]),
+        "signal_bandwidth_fraction": list(data_cfg["config"]["bandwidth"]),  # generator setting
+        "measured_bandwidth_fraction": measured,  # what the backend decimates to
         "model": "SpectrogramCNN",
         "weights": "model.pt",
         "commit": train_info["commit"],
@@ -232,6 +273,7 @@ def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
         "correlated": {"run": "ts_corr", "temperature": t_star, "accumulation": correlated},
         "independent": {"run": "ts_indep", "temperature": t_star, "accumulation": independent},
         "ood": ood_report(ood_z, ood.tsig_class, ood.snr, t_star),
+        "measured_bandwidth": measured,
         "settings": {
             "frames_per_record": FRAMES_PER_RECORD,
             "k_max": K_MAX,
@@ -340,6 +382,21 @@ def summary(m: dict) -> str:
                 f"| {name} | {tau} | {pct(r['unknown_share'])} | "
                 + " | ".join(pct(ub[g]) for g in groups)
                 + f" | {dec} |"
+            )
+
+    mb = m.get("measured_bandwidth")
+    if mb:
+        lines += [
+            "",
+            f"## Measured bandwidth, fraction of fs ({mb['definition']})",
+            "",
+            "| Group | Median | 25-75 % | 5-95 % | Records |",
+            "|---|---|---|---|---|",
+        ]
+        for name, q in [("all", mb["all"]), *mb["by_group"].items()]:
+            lines.append(
+                f"| {name} | {q['median']:.3f} | {q['p25']:.3f}-{q['p75']:.3f} | "
+                f"{q['p05']:.3f}-{q['p95']:.3f} | {q['records']} |"
             )
     return "\n".join(lines) + "\n"
 
