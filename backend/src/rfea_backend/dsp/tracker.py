@@ -1,9 +1,14 @@
 """Tracking detected intervals between rows (thesis (3.11)).
 
-An interval joins the active track with the largest frequency IoU, if that IoU >= rho;
-otherwise it opens a new track. A track that gets no interval for more than `max_gap`
-rows is closed. Tracks seen in fewer than `min_rows` rows are noise: they are not shown
-and do not go to the event log.
+An interval joins the active track with the largest frequency IoU, if that IoU >= rho
+(one interval per track, best pairs first); the track takes the interval's bounds.
+A track left without an interval is still continued, with its own bounds kept, when an
+interval of the row contains it entirely: two neighboring signals whose intervals merge in
+some rows (the detector bridges gaps of up to merge_gap bins) then keep their tracks
+instead of one of them being closed and reopened as a second event. An interval that
+matched no track opens a new track unless it contains an active track. A track that gets
+no interval for more than `max_gap` rows is closed. Tracks seen in fewer than `min_rows`
+rows are noise: they are not shown and do not go to the event log.
 """
 
 from dataclasses import dataclass, field
@@ -48,6 +53,10 @@ def iou(a: tuple[int, int], b: tuple[int, int]) -> float:
     return inter / union
 
 
+def contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+    return outer[0] <= inner[0] and inner[1] <= outer[1]
+
+
 class Tracker:
     def __init__(self, cfg: TrackerConfig | None = None):
         self.cfg = cfg or TrackerConfig()
@@ -76,13 +85,20 @@ class Tracker:
                 continue
             t = self.active[tid]
             t.k1, t.k2 = intervals[j]
-            t.last_row, t.missed = row, 0
-            t.rows_seen += 1
-            self._accumulate(t, p_db, noise_db)
+            self._continue(t, row, p_db, noise_db)
             matched_tracks.add(tid)
             matched_intervals.add(j)
+        holders: set[int] = set()  # intervals that contain a confirmed track
+        for tid, t in self.active.items():
+            if not self.confirmed(t):  # pieces of a signal still taking shape are not kept
+                continue
+            inside = [j for j, iv in enumerate(intervals) if contains(iv, (t.k1, t.k2))]
+            holders.update(inside)
+            if inside and tid not in matched_tracks:
+                self._continue(t, row, p_db, noise_db)  # bounds kept
+                matched_tracks.add(tid)
         for j, (k1, k2) in enumerate(intervals):
-            if j not in matched_intervals:
+            if j not in matched_intervals and j not in holders:
                 t = Track(self._next_id, k1, k2, row, row)
                 self._accumulate(t, p_db, noise_db)
                 self.active[t.id] = t
@@ -104,6 +120,11 @@ class Tracker:
         closed = list(self.active.values())
         self.active.clear()
         return closed
+
+    def _continue(self, t: Track, row: int, p_db: np.ndarray | None, noise_db: float | None):
+        t.last_row, t.missed = row, 0
+        t.rows_seen += 1
+        self._accumulate(t, p_db, noise_db)
 
     @staticmethod
     def _accumulate(t: Track, p_db: np.ndarray | None, noise_db: float | None) -> None:
