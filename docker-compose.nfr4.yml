@@ -1,0 +1,8 @@
+# NFR-4 measurement on the minimum configuration: the backend limited to 4 CPU cores and
+# 8 GB of memory, no GPU.
+#   docker compose -f docker-compose.yml -f docker-compose.nfr4.yml up -d --build
+#   uv run python -m rfea_backend.measure_latency --scene eval1 --seconds 60 --out nfr4.json
+services:
+  backend:
+    cpus: 4
+    mem_limit: 8g
