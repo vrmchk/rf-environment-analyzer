@@ -15,7 +15,7 @@ import { Waterfall, type WaterfallHandle } from './Waterfall'
 
 type Status = 'disconnected' | 'idle' | 'running' | 'paused'
 
-const DEFAULT_PARAMS: SessionParams = { gamma_db: 6, tau: 0.95, k_max: 20 }
+const DEFAULT_PARAMS: SessionParams = { gamma_db: 3, tau: 0.95, k_max: 20 }
 
 export default function App() {
   const ws = useRef<WebSocket | null>(null)

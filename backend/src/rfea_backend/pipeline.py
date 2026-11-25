@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -28,7 +28,7 @@ from rfea_backend.api.protocol import Row
 from rfea_backend.classify.model import Classifier
 from rfea_backend.dsp import channelizer
 from rfea_backend.dsp.channelizer import Band
-from rfea_backend.dsp.detector import DetectorConfig, detect
+from rfea_backend.dsp.detector import DetectionSmoother, DetectorConfig, detect
 from rfea_backend.dsp.tracker import Track, Tracker, TrackerConfig, TrackState
 from rfea_backend.dsp.waterfall import Waterfall, WaterfallConfig
 from rfea_backend.sources.base import IqSource
@@ -39,7 +39,7 @@ FRAMES_PER_ROW = 4
 
 @dataclass(frozen=True)
 class SessionParams:
-    gamma_db: float = 6.0  # detection threshold over noise (FR-7)
+    gamma_db: float = 3.0  # detection threshold over noise (FR-7), chosen by FR-13
     tau: float = 0.95  # confidence threshold of the stopping rule (FR-8)
     k_max: int = 20  # max frames per signal (FR-8)
 
@@ -77,6 +77,7 @@ class Session:
         params: SessionParams,
         emit: Emit,
         classifier: Classifier | None = None,
+        detector: DetectorConfig | None = None,
         waterfall: WaterfallConfig | None = None,
         realtime: bool = True,
         on_event: Callable[[dict], None] | None = None,
@@ -88,6 +89,8 @@ class Session:
         self.source = source
         self.emit = emit
         self.classifier = classifier
+        # gamma comes from the session parameters (FR-7); the rest from the defaults
+        self.detector = replace(detector or DetectorConfig(), gamma_db=params.gamma_db)
         self.wf_cfg = waterfall or WaterfallConfig()
         self.realtime = realtime
         self.on_event = on_event
@@ -103,9 +106,11 @@ class Session:
 
     def stored_params(self) -> dict:
         """Everything that shapes the session's results, for the session row (FR-9)."""
-        det, trk = DetectorConfig(gamma_db=self.params.gamma_db), TrackerConfig()
+        det, trk = self.detector, TrackerConfig()
         return asdict(self.params) | {
             "merge_gap": det.merge_gap, "min_bins": det.min_bins, "sidelobe_db": det.sidelobe_db,
+            "smooth_rows": det.smooth_rows, "smooth_bins": det.smooth_bins,
+            "edge_bins": det.edge_bins,
             "rho": trk.rho, "max_gap": trk.max_gap, "min_rows": trk.min_rows,
             "n_fft": self.wf_cfg.n_fft, "row_samples": self.wf_cfg.row_samples,
             "frames_per_row": FRAMES_PER_ROW,
@@ -164,7 +169,7 @@ class Session:
     def _loop(self) -> None:
         fs, n = self.source.sample_rate, self.wf_cfg.row_samples
         waterfall = Waterfall(self.wf_cfg)
-        detector = DetectorConfig(gamma_db=self.params.gamma_db)
+        smoother = DetectionSmoother(self.detector)
         tracker = Tracker(TrackerConfig())
         t0 = time.monotonic()
         row, t = 0, 0.0
@@ -186,7 +191,7 @@ class Session:
             p_db, levels, lo, hi = waterfall.row(block)
             t = end / fs
             self.emit(Row(row, t, self.source.center_freq, fs, lo, hi, wall, levels).encode())
-            noise_db, intervals = detect(p_db, detector)
+            noise_db, intervals = detect(smoother(p_db), self.detector)
             closed = tracker.update(row, intervals, p_db, noise_db)
             for tr in tracker.active.values():
                 if tr.id not in self._signals and self.classifier is not None:

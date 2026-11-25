@@ -49,7 +49,7 @@ def test_session_streams_rows_until_the_scene_ends(client) -> None:
         assert tracks[1]["tracks"] == []
         [box] = tracks[2]["tracks"]
         assert box["f_lo_hz"] < 100.1e6 < box["f_hi_hz"]
-        assert box["f_hi_hz"] - box["f_lo_hz"] < 10e3
+        assert box["f_hi_hz"] - box["f_lo_hz"] < 20e3  # a tone, widened by the smoothing
         assert box["t0"] == 0 and box["n_frames"] > 0
         # the untrained model either decides or the signal is logged as unknown at the end
         [event] = events

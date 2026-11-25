@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from rfea_backend.dsp.detector import DetectorConfig, detect
+from rfea_backend.dsp.detector import DetectionSmoother, DetectorConfig, detect
 from rfea_backend.dsp.tracker import Tracker, TrackerConfig, iou
 
 
@@ -31,6 +31,21 @@ def test_detect_drops_side_lobes_of_a_strong_neighbor() -> None:
     p[240 + 30 : 240 + 36] = 12.0  # 10 bins past the main lobe, 18 dB weaker: side lobe
     p[600:620] = 12.0  # equally weak but far away: a signal of its own
     assert detect(p, DetectorConfig(gamma_db=6))[1] == [(200, 260), (600, 619)]
+
+
+def test_smoothing_joins_a_flickering_signal() -> None:
+    rng = np.random.default_rng(0)
+    cfg = DetectorConfig(gamma_db=3, merge_gap=2, smooth_rows=4, smooth_bins=5)
+    sm = DetectionSmoother(cfg)
+    raw_pieces, smooth_pieces = [], []
+    for _ in range(12):
+        p = rng.normal(0, 0.6, 1024)  # noise in dB around 0
+        p[300:340] = 3.5 + rng.normal(0, 2.5, 40)  # weak signal, bins dip below 3 dB
+        raw = DetectorConfig(gamma_db=3, merge_gap=2, smooth_bins=1)
+        raw_pieces.append(len(detect(p, raw)[1]))
+        smooth_pieces.append(len(detect(sm(p), cfg)[1]))
+    assert sum(n > 1 for n in raw_pieces) >= 8  # raw rows mostly break the signal up
+    assert sum(n == 1 for n in smooth_pieces) >= 10  # smoothed rows keep it whole
 
 
 def test_iou() -> None:
