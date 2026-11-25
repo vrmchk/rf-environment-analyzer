@@ -1,7 +1,10 @@
 # Whole system with one command (NFR-2):
-#   RFEA_DATA_DIR=D:/Masters/data RFEA_MODEL_DIR=D:/Masters/outputs/exp04/spec_n32 docker compose up --build
+#   docker compose up --build
 # then open http://localhost:8080. Scenes (<RFEA_DATA_DIR>/scenes) and the model are mounted
-# read-only; the event log lives in the pgdata volume and survives restarts (NFR-9).
+# read-only. By default, as in rfea_ml.paths, they come from the data and outputs folders
+# next to the main checkout, and the model is the one chosen for the system (thesis 5.5,
+# exp04_uniform_p20). From a worktree or another layout set RFEA_DATA_DIR and RFEA_MODEL_DIR
+# (or RFEA_OUTPUT_DIR). The event log lives in the pgdata volume and survives restarts (NFR-9).
 # The database credentials are for a local, single-operator setup (NFR-3).
 name: rfea
 
@@ -28,8 +31,8 @@ services:
     environment:
       RFEA_DATABASE_URL: postgresql+psycopg://rfea:rfea@db:5432/rfea
     volumes:
-      - ${RFEA_DATA_DIR:-./data}/scenes:/data/scenes:ro
-      - ${RFEA_MODEL_DIR:-./model}:/model:ro
+      - ${RFEA_DATA_DIR:-../data}/scenes:/data/scenes:ro
+      - ${RFEA_MODEL_DIR:-${RFEA_OUTPUT_DIR:-../outputs}/exp04_uniform_p20/spec_n32}:/model:ro
     depends_on:
       db:
         condition: service_healthy
