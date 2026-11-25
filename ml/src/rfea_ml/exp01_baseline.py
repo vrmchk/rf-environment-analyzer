@@ -13,7 +13,9 @@ model.pt, history.json, metrics.json, logits.npz (val and test logits, kept for 
 calibration and decision accumulation experiments), plus summary plots in the same folder.
 
 Epoch limits: 60 for the spectrogram CNNs, 200 for the O'Shea CNN (it converges slowly);
-early stopping usually ends training much earlier.
+early stopping usually ends training much earlier. Early-stopping patience: 8 epochs for the
+spectrogram CNNs, 20 for the O'Shea CNN (its validation loss has long plateaus around epoch
+40, and patience 8 stopped some seeds there).
 
 Usage: uv run python -m rfea_ml.exp01_baseline [--runs spec_n16 oshea_iq] [--seed 1 2]
     [--skip-existing] [--plot-only]
@@ -40,6 +42,7 @@ from rfea_ml.train import TrainConfig, evaluate, fit, predict_logits
 
 RUNS = ("spec_n16", "spec_n32", "spec_n64", "oshea_iq")
 MAX_EPOCHS = {"spec_n16": 60, "spec_n32": 60, "spec_n64": 60, "oshea_iq": 200}
+PATIENCE = {"spec_n16": 8, "spec_n32": 8, "spec_n64": 8, "oshea_iq": 20}
 
 
 def build(run: str, n_classes: int):
@@ -137,6 +140,9 @@ def main() -> None:
     )
     parser.add_argument("--max-epochs", type=int, help="override the per-model epoch limit")
     parser.add_argument(
+        "--patience", type=int, help="override the per-model early-stopping patience"
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="do not retrain runs that already have metrics.json (resume an interrupted job)",
@@ -157,7 +163,11 @@ def main() -> None:
                 if args.skip_existing and done.exists():
                     print(f"[{run}] seed {seed}: {done} exists, skipped", flush=True)
                     continue
-                cfg = TrainConfig(max_epochs=args.max_epochs or MAX_EPOCHS[run], seed=seed)
+                cfg = TrainConfig(
+                    max_epochs=args.max_epochs or MAX_EPOCHS[run],
+                    patience=args.patience or PATIENCE[run],
+                    seed=seed,
+                )
                 run_one(run, data, split, device, cfg, commit)
             plot_summary(seed)
     else:
