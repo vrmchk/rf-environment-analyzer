@@ -33,7 +33,7 @@ def load_metrics(paths: dict[str, Path]) -> dict[str, dict]:
     return {run: json.loads(p.read_text()) for run, p in paths.items() if p.exists()}
 
 
-def _style_axes(ax) -> None:
+def style_axes(ax) -> None:
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
@@ -54,7 +54,7 @@ def plot_accuracy_vs_snr(metrics: dict[str, dict], path: Path) -> None:
     ax.set_title("RadioML 2016.10A: test accuracy vs SNR", color=INK, loc="left")
     ax.set_ylim(0, 100)
     ax.set_xticks(range(-20, 20, 2))
-    _style_axes(ax)
+    style_axes(ax)
     ax.legend(frameon=False, labelcolor=INK, loc="upper left")
     fig.tight_layout()
     fig.savefig(path)
