@@ -2,7 +2,7 @@
 # Install everything for development with: uv sync --all-packages
 
 [tool.uv.workspace]
-members = ["ml", "packages/rfea_core"]
+members = ["ml", "packages/rfea_core", "backend"]
 
 [tool.uv]
 # Lock only for the platforms we use: Windows (training on GPU) and Linux (backend in Docker).
@@ -32,7 +32,11 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [dependency-groups]
-dev = ["pytest>=9", "ruff>=0.14"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9",
+    "ruff>=0.14",
+]
 
 [tool.ruff]
 line-length = 100
@@ -42,7 +46,7 @@ target-version = "py314"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["rfea_core", "rfea_ml"]
+known-first-party = ["rfea_core", "rfea_ml", "rfea_backend"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/rfea_core/tests", "ml/tests"]
+testpaths = ["packages/rfea_core/tests", "ml/tests", "backend/tests"]

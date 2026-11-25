@@ -97,10 +97,12 @@ def read_config(name: str = DEFAULT_NAME) -> dict:
     return json.loads((dataset_dir(name) / "config.json").read_text())
 
 
-def _torchsig_generators(names: tuple[str, ...], cfg: GenConfig, seed: int):
+def _torchsig_generators(
+    names: tuple[str, ...], cfg: GenConfig, seed: int, length: int = RECORD_LEN
+):
     from torchsig.datasets.datasets import TorchSigIterableDataset  # heavy import
 
-    n, fs = RECORD_LEN + MARGIN, SAMPLE_RATE
+    n, fs = length + MARGIN, SAMPLE_RATE
     metadata = dict(
         num_iq_samples_dataset=n, num_signals_min=1, num_signals_max=1,
         fft_size=64, fft_stride=64, sample_rate=fs, noise_power_db=0.0,
@@ -115,9 +117,12 @@ def _torchsig_generators(names: tuple[str, ...], cfg: GenConfig, seed: int):
     return TorchSigIterableDataset(signal_generators=list(names), metadata=metadata, seed=seed)
 
 
-def impair(s: np.ndarray, imp: Impairments, rng: np.random.Generator) -> np.ndarray:
-    """Carrier offset and drift, initial phase, phase noise, clock offset; returns RECORD_LEN."""
-    n = np.arange(RECORD_LEN)
+def impair(
+    s: np.ndarray, imp: Impairments, rng: np.random.Generator, length: int = RECORD_LEN
+) -> np.ndarray:
+    """Carrier offset and drift, initial phase, phase noise, clock offset; returns `length`
+    samples (s needs MARGIN extra samples for the clock offset)."""
+    n = np.arange(length)
     t = n * (1 + rng.uniform(-imp.clock, imp.clock))  # resample at the drifted clock
     src = np.arange(len(s))
     s = np.interp(t, src, s.real) + 1j * np.interp(t, src, s.imag)
@@ -127,7 +132,7 @@ def impair(s: np.ndarray, imp: Impairments, rng: np.random.Generator) -> np.ndar
     phase = (
         2 * np.pi * (f0 * n + df * n**2 / 2)
         + rng.uniform(0, 2 * np.pi)
-        + np.cumsum(rng.normal(0, sigma, RECORD_LEN))
+        + np.cumsum(rng.normal(0, sigma, length))
     )
     return s * np.exp(1j * phase)
 
