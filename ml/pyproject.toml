@@ -8,6 +8,7 @@ dependencies = [
     "numpy>=2.3",
     "matplotlib>=3.10",
     "scikit-learn>=1.7",
+    "scipy>=1.16",  # polyphase resampling in rfea_ml.scenes
     "torchsig==2.2.0",
     # Needed by torchsig; listed directly so that uv takes it from the PyTorch index
     # (sources in the root pyproject.toml apply only to direct dependencies).
