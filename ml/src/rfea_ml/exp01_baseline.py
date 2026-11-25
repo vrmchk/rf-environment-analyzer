@@ -15,8 +15,10 @@ calibration and decision accumulation experiments), plus summary plots in the sa
 Epoch limits: 60 for the spectrogram CNNs, 200 for the O'Shea CNN (it converges slowly);
 early stopping usually ends training much earlier.
 
-Usage: uv run python -m rfea_ml.exp01_baseline [--runs spec_n16 oshea_iq] [--seed 1 2] [--plot-only]
-(several seeds run one after another in one process)
+Usage: uv run python -m rfea_ml.exp01_baseline [--runs spec_n16 oshea_iq] [--seed 1 2]
+    [--skip-existing] [--plot-only]
+(several seeds run one after another in one process; --skip-existing resumes an
+interrupted job: runs that already have metrics.json are not retrained)
 """
 
 import argparse
@@ -134,6 +136,11 @@ def main() -> None:
         "--seed", type=int, nargs="+", default=[0], help="training seeds; the split is fixed"
     )
     parser.add_argument("--max-epochs", type=int, help="override the per-model epoch limit")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="do not retrain runs that already have metrics.json (resume an interrupted job)",
+    )
     parser.add_argument("--plot-only", action="store_true")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
@@ -146,6 +153,10 @@ def main() -> None:
         commit = git_commit()  # code is imported once; later edits do not affect this run
         for seed in args.seed:
             for run in args.runs:
+                done = exp_dir(seed) / run / "metrics.json"
+                if args.skip_existing and done.exists():
+                    print(f"[{run}] seed {seed}: {done} exists, skipped", flush=True)
+                    continue
                 cfg = TrainConfig(max_epochs=args.max_epochs or MAX_EPOCHS[run], seed=seed)
                 run_one(run, data, split, device, cfg, commit)
             plot_summary(seed)
