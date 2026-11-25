@@ -15,6 +15,8 @@ LABELS = {
     "spec_n64": "Spectrogram CNN, window 64",
     "oshea_iq": "IQ CNN (O'Shea et al.)",
     "svm": "SVM, 7 features",
+    "ts_corr": "TorchSig CNN, consecutive frames of one signal",
+    "ts_indep": "TorchSig CNN, independent frames",
 }
 # Categorical slots 1-5 of the validated reference palette (light mode), in fixed order,
 # plus marker and line style so series are not distinguished by color alone.
