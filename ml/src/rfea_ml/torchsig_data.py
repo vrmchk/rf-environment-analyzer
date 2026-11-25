@@ -9,6 +9,13 @@ Generation of one record:
   1. TorchSig builds a clean baseband signal of the class (no noise, no TorchSig
      impairments); its bandwidth is a random fraction of the sample rate, uniform in
      GenConfig.bandwidth (default 0.15-0.5; --bandwidth changes it);
+  1a. only with --measured LO HI: the clean signal is resampled so that its measured
+     bandwidth (90 % of the power, rfea_core.occupied_bandwidth) is uniform in [LO, HI]
+     for every class. With TorchSig's own bandwidth the measured width depends on the
+     class (WBFM ~0.11, FSK ~0.19, PSK/QAM ~0.37 of the rate), the network learns it as
+     a class cue, and the backend, which decimates every signal to one fraction, breaks
+     it (WBFM taken for GFSK). The source is generated RESAMPLE_CAP times longer so that
+     narrow signals can be widened; `bandwidth` is then TorchSig's value at the new rate;
   2. our impairments, close to the RadioML channel: carrier frequency offset and linear
      drift, initial phase, Wiener phase noise, sample clock offset (see Impairments);
   3. power normalized to 1 and complex white Gaussian noise added so that
@@ -25,21 +32,27 @@ val.npz, test.npz, ood_test.npz (x complex64 (n, RECORD_LEN), y, snr, bandwidth,
 tsig_class) and config.json. Different bandwidth ranges go to different names, e.g.
 
   uv run python -m rfea_ml.torchsig_data --bandwidth 0.10 0.20 --name torchsig_narrow
+  uv run python -m rfea_ml.torchsig_data --measured 0.15 0.45 --name torchsig_uniform
 
 Usage: uv run python -m rfea_ml.torchsig_data [--records 250] [--workers 4]
-       [--bandwidth LO HI] [--name torchsig]
+       [--bandwidth LO HI] [--measured LO HI] [--name torchsig]
 """
 
 import argparse
 import json
+import math
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
+import torch
+from scipy.signal import resample_poly
 
+from rfea_core import occupied_bandwidth
 from rfea_ml.paths import data_dir, git_commit
 from rfea_ml.radioml import CLASSES
 
@@ -65,6 +78,8 @@ OOD_CLASSES = ("ofdm-64", "lfm-data", "4fsk", "32qam")  # test only: two far, tw
 SAMPLE_RATE = 1e6  # TorchSig needs Hz; everything below is relative to it
 MARGIN = 64  # extra samples generated so that clock-offset resampling stays inside the signal
 DEFAULT_NAME = "torchsig"  # dataset folder in <data_dir>
+RESAMPLE_CAP = 16  # source length, in records, available for widening a signal (--measured)
+RESAMPLE_EDGE = 64  # output samples dropped at each end of a resampled record (transients)
 
 
 @dataclass(frozen=True)
@@ -83,6 +98,8 @@ class GenConfig:
     fractions: tuple[float, float, float] = (0.6, 0.2, 0.2)
     ood_records: int = 50  # per (OOD class, SNR), test only
     bandwidth: tuple[float, float] = (0.15, 0.5)  # fraction of the sample rate
+    # Measured (90 % power) bandwidth range, fraction of the rate; None keeps TorchSig's own.
+    measured: tuple[float, float] | None = None
     snrs: tuple[int, ...] = SNRS
     seed: int = 0
     impairments: Impairments = field(default_factory=Impairments)
@@ -145,10 +162,32 @@ def add_noise(s: np.ndarray, snr_db: float, rng: np.random.Generator) -> np.ndar
     return (s + w[0] + 1j * w[1]).astype(np.complex64)
 
 
+def to_measured(
+    s: np.ndarray, target: float, length: int = RECORD_LEN + MARGIN
+) -> tuple[np.ndarray, float]:
+    """Resample a clean signal so that its measured bandwidth is `target` (fraction of the
+    rate). Returns `length` samples and the rate ratio r = new fraction / old fraction.
+
+    The source must hold about length * r samples (r is capped by what it holds)."""
+    m = float(occupied_bandwidth(torch.from_numpy(s[None, :RECORD_LEN].astype(np.complex64)))[0])
+    r = min(target / m, (len(s) - 1) / (length + 2 * RESAMPLE_EDGE))
+    q = Fraction(r).limit_denominator(32)  # new rate = old * up / down, fraction * down / up
+    up, down = q.denominator, q.numerator
+    src = s[: math.ceil((length + 2 * RESAMPLE_EDGE) * down / up) + 1]
+    y = resample_poly(src, up, down)[RESAMPLE_EDGE : RESAMPLE_EDGE + length]
+    return y, down / up
+
+
 def generate_class(label: int, names: tuple[str, ...], n_records: int, cfg: GenConfig) -> dict:
-    """All records of one class: n_records per SNR, TorchSig names used in turn."""
+    """All records of one class: n_records per SNR, TorchSig names used in turn.
+
+    With cfg.measured, every clean signal is generated longer (RESAMPLE_CAP times) and
+    resampled so that its measured bandwidth is uniform in cfg.measured for every class."""
     seed = cfg.seed * 1000 + label
-    ds = _torchsig_generators(names, cfg, seed)
+    n_src = RECORD_LEN
+    if cfg.measured:
+        n_src = math.ceil((RECORD_LEN + MARGIN + 2 * RESAMPLE_EDGE) * RESAMPLE_CAP)
+    ds = _torchsig_generators(names, cfg, seed, length=n_src)
     gens = {g.class_name: g for g in ds.signal_generators}
     rng = np.random.default_rng(seed)
     out = {k: [] for k in ("x", "snr", "bandwidth", "tsig_class")}
@@ -156,10 +195,13 @@ def generate_class(label: int, names: tuple[str, ...], n_records: int, cfg: GenC
         for i in range(n_records):
             name = names[i % len(names)]
             sig = gens[name]()
-            x = impair(np.asarray(sig.data, dtype=np.complex128), cfg.impairments, rng)
+            s, r = np.asarray(sig.data, dtype=np.complex128), 1.0
+            if cfg.measured:
+                s, r = to_measured(s, rng.uniform(*cfg.measured))
+            x = impair(s, cfg.impairments, rng)
             out["x"].append(add_noise(x, snr, rng))
             out["snr"].append(snr)
-            out["bandwidth"].append(sig["bandwidth"] / SAMPLE_RATE)
+            out["bandwidth"].append(sig["bandwidth"] / SAMPLE_RATE * r)
             out["tsig_class"].append(name)
     return {
         "x": np.stack(out["x"]),
@@ -265,6 +307,11 @@ def main() -> None:
         "--bandwidth", type=float, nargs=2, default=GenConfig.bandwidth, metavar=("LO", "HI"),
         help="signal bandwidth range, fraction of the sample rate (default %(default)s)",
     )  # fmt: skip
+    parser.add_argument(
+        "--measured", type=float, nargs=2, default=None, metavar=("LO", "HI"),
+        help="resample every record to a measured bandwidth uniform in [LO, HI], fraction "
+        "of the sample rate, the same for all classes (default: off)",
+    )  # fmt: skip
     parser.add_argument("--name", default=DEFAULT_NAME, help="dataset folder in <data_dir>")
     parser.add_argument("--out", type=Path, default=None, help="default: <data_dir>/<name>")
     args = parser.parse_args()
@@ -272,7 +319,13 @@ def main() -> None:
     lo, hi = args.bandwidth
     if not 0 < lo < hi <= 1:
         parser.error("--bandwidth needs 0 < LO < HI <= 1")
-    cfg = GenConfig(records=args.records, ood_records=args.ood_records, bandwidth=(lo, hi))
+    measured = None
+    if args.measured:
+        measured = tuple(args.measured)
+        if not 0 < measured[0] < measured[1] < 1:
+            parser.error("--measured needs 0 < LO < HI < 1")
+    cfg = GenConfig(records=args.records, ood_records=args.ood_records, bandwidth=(lo, hi),
+                    measured=measured)  # fmt: skip
     out = args.out or dataset_dir(args.name)
     if (out / "config.json").exists():
         parser.error(f"{out} already holds a dataset; choose another --name")

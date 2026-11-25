@@ -261,6 +261,7 @@ def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
         "frame_len": tsd.FRAME_LEN,
         "stft": {"n_fft": N_FFT, "hop": N_FFT // 4, "window": "hann", "out_size": [64, 64]},
         "signal_bandwidth_fraction": list(data_cfg["config"]["bandwidth"]),  # generator setting
+        "generated_measured_fraction": data_cfg["config"].get("measured"),  # resampling target
         "measured_bandwidth_fraction": measured,  # what the backend decimates to
         "model": "SpectrogramCNN",
         "weights": "model.pt",
@@ -326,7 +327,13 @@ def summary(m: dict) -> str:
         "",
         f"Data set: {m['settings'].get('dataset', tsd.DEFAULT_NAME)}, signal bandwidth "
         f"{'-'.join(str(b) for b in m['settings']['data']['config']['bandwidth'])} "
-        "of the sample rate.",
+        "of the sample rate"
+        + (
+            f", resampled to a measured bandwidth {'-'.join(str(b) for b in mr)}"
+            if (mr := m["settings"]["data"]["config"].get("measured"))
+            else ""
+        )
+        + ".",
         "",
         f"Training: {m['train']['epochs']} epochs (best {m['train']['best_epoch']}), "
         f"{m['train']['train_seconds'] / 60:.1f} min, frames {m['train']['frames']}.",
