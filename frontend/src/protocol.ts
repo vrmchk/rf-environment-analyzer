@@ -96,6 +96,17 @@ export interface Scene {
   n_signals: number
 }
 
+// GET /api/sessions
+export interface SessionSummary {
+  id: string
+  scene: string
+  started_at: string
+  ended_at: string | null
+  end_reason: 'finished' | 'stopped' | 'error' | null
+  n_events: number
+  params: Record<string, number>
+}
+
 export type Command =
   | { type: 'start'; scene: string; params: Partial<SessionParams> }
   | { type: 'pause' }

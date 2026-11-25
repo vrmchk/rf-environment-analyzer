@@ -1,0 +1,46 @@
+# Whole system with one command (NFR-2):
+#   RFEA_DATA_DIR=D:/Masters/data RFEA_MODEL_DIR=D:/Masters/outputs/exp04/spec_n32 docker compose up --build
+# then open http://localhost:8080. Scenes (<RFEA_DATA_DIR>/scenes) and the model are mounted
+# read-only; the event log lives in the pgdata volume and survives restarts (NFR-9).
+# The database credentials are for a local, single-operator setup (NFR-3).
+name: rfea
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: rfea
+      POSTGRES_PASSWORD: rfea
+      POSTGRES_DB: rfea
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rfea -d rfea"]
+      interval: 2s
+      retries: 30
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      RFEA_DATABASE_URL: postgresql+psycopg://rfea:rfea@db:5432/rfea
+    volumes:
+      - ${RFEA_DATA_DIR:-./data}/scenes:/data/scenes:ro
+      - ${RFEA_MODEL_DIR:-./model}:/model:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

@@ -1,20 +1,26 @@
-"""FastAPI app: REST for lists and health, WebSocket /ws for session control and streams.
+"""FastAPI app: REST for lists, the event log and CSV; WebSocket /ws for control and streams.
 
-Run: uv run uvicorn rfea_backend.app:app --port 8000
-Env: RFEA_DATA_DIR (scenes in <dir>/scenes) or RFEA_SCENES_DIR; RFEA_MODEL_DIR.
+Run: uv run uvicorn rfea_backend.app:create_app --factory --port 8000
+Env: RFEA_DATA_DIR (scenes in <dir>/scenes) or RFEA_SCENES_DIR; RFEA_MODEL_DIR;
+RFEA_DATABASE_URL.
 """
 
 import asyncio
 import contextlib
+import hashlib
 from dataclasses import asdict, fields
+from datetime import UTC, datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from rfea_backend.api import protocol
 from rfea_backend.classify.model import Classifier, ModelError, load_classifier
+from rfea_backend.db.repo import Repo
 from rfea_backend.pipeline import Session, SessionParams
 from rfea_backend.settings import Settings
-from rfea_backend.sources.virtual import VirtualSource, list_scenes
+from rfea_backend.sources.virtual import META_SUFFIX, VirtualSource, list_scenes
 
 CLIENT_QUEUE = 400  # messages; ~10 s of rows. A slow client loses the oldest ones.
 
@@ -51,6 +57,12 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
         classifier = load_classifier(settings.model_dir)
     except ModelError as e:
         model_error = str(e)
+    repo = Repo(settings.database_url)
+    db_error: str | None = None
+    try:
+        repo.migrate()
+    except (SQLAlchemyError, OSError) as e:
+        db_error = f"{type(e).__name__}: {e}"
 
     def current() -> Session | None:
         s = state["session"]
@@ -59,10 +71,12 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
     @app.get("/api/health")
     def health() -> dict:
         s = current()
+        ok = classifier is not None and db_error is None
         return {
-            "status": "ok" if classifier else "model_error",
+            "status": "ok" if ok else "error",
             "model": classifier.describe() if classifier else None,
             "model_error": model_error,
+            "db_error": db_error,
             "session": s.id if s else None,
         }
 
@@ -70,9 +84,32 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
     def scenes() -> list[dict]:
         return [asdict(s) for s in list_scenes(settings.scenes_dir)]
 
+    @app.get("/api/sessions")
+    def sessions() -> list[dict]:
+        return repo.list_sessions()
+
+    @app.get("/api/sessions/{sid}/events")
+    def events(sid: str) -> list[dict]:
+        if repo.get_session(sid) is None:
+            raise HTTPException(404, "session not found")
+        return repo.list_events(sid)
+
+    @app.get("/api/sessions/{sid}/events.csv")
+    def events_csv(sid: str) -> PlainTextResponse:
+        text = repo.events_csv(sid)
+        if text is None:
+            raise HTTPException(404, "session not found")
+        return PlainTextResponse(
+            text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="session-{sid}.csv"'},
+        )
+
     def start(msg: dict, loop: asyncio.AbstractEventLoop) -> dict | None:
         if classifier is None:
             return protocol.error(f"model not loaded: {model_error}")
+        if db_error is not None:
+            return protocol.error(f"database unavailable: {db_error}")
         if current() is not None:
             return protocol.error("a session is already running")
         known = {f.name for f in fields(SessionParams)}
@@ -86,7 +123,18 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
         def emit(m: dict | bytes) -> None:
             loop.call_soon_threadsafe(hub.publish, m)
 
-        session = Session(source, source.info.name, params, emit, classifier, realtime=realtime)
+        session = Session(source, source.info.name, params, emit, classifier, realtime=realtime,
+                          on_event=repo.add_event)  # fmt: skip
+        session.on_end = lambda reason, error: repo.end_session(session.id, reason, error)
+        meta = settings.scenes_dir / f"{source.info.name}{META_SUFFIX}"
+        try:
+            repo.create_session(session.id, source.info.name,
+                                hashlib.sha256(meta.read_bytes()).hexdigest(),
+                                session.stored_params(), classifier.describe(),
+                                datetime.now(UTC))  # fmt: skip
+        except SQLAlchemyError as e:
+            source.close()
+            return protocol.error(f"cannot store the session: {type(e).__name__}")
         state["session"] = session
         hub.publish(session.started_message())
         session.start()
@@ -136,6 +184,3 @@ def create_app(settings: Settings | None = None, realtime: bool = True) -> FastA
                 await send_task
 
     return app
-
-
-app = create_app()
