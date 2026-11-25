@@ -27,10 +27,10 @@ from rfea_backend.sources.virtual import META_SUFFIX, VirtualSource
 def run(settings: Settings, scene: str, params: SessionParams, out: Path,
         detector: DetectorConfig | None = None) -> dict:  # fmt: skip
     clf = load_classifier(settings.model_dir)
+    source = VirtualSource(settings.scenes_dir, scene)
     with tempfile.TemporaryDirectory() as tmp:
         repo = Repo(f"sqlite:///{(Path(tmp) / 'log.db').as_posix()}")
         repo.migrate()
-        source = VirtualSource(settings.scenes_dir, scene)
         ended: dict = {}
         session = Session(source, scene, params, lambda m: None, clf, detector=detector,
                           realtime=False, on_event=repo.add_event)  # fmt: skip

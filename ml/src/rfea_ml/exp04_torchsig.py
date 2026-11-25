@@ -67,6 +67,7 @@ FRAMES_PER_RECORD = 4
 N_SEQUENCES = 50  # independent sequences per (class, SNR); equals test records per pair
 SEED = 0
 RUN = "spec_n32"
+PATIENCE = TrainConfig.patience  # 8, as in experiment 01
 # Measured bandwidth for the backend's decimation rule (method.md, section 1): 90 % of the
 # power, over test records with SNR >= 10 dB, where noise barely widens the measurement.
 POWER_FRACTION = 0.9
@@ -78,11 +79,15 @@ BANDWIDTH_GROUPS = {
 }
 
 
-def exp_dir(dataset: str = tsd.DEFAULT_NAME) -> Path:
-    """exp04 for the default data set, exp04_<suffix> for torchsig_<suffix> (or <name>)."""
-    if dataset == tsd.DEFAULT_NAME:
-        return output_dir() / "exp04"
-    return output_dir() / f"exp04_{dataset.removeprefix(tsd.DEFAULT_NAME + '_')}"
+def exp_dir(dataset: str = tsd.DEFAULT_NAME, patience: int = PATIENCE) -> Path:
+    """exp04 for the default data set, exp04_<suffix> for torchsig_<suffix> (or <name>);
+    a non-default early-stopping patience adds _p<patience>."""
+    name = "exp04"
+    if dataset != tsd.DEFAULT_NAME:
+        name += f"_{dataset.removeprefix(tsd.DEFAULT_NAME + '_')}"
+    if patience != PATIENCE:
+        name += f"_p{patience}"
+    return output_dir() / name
 
 
 def frame_starts(n_records: int, rng: np.random.Generator) -> np.ndarray:
@@ -111,15 +116,15 @@ def all_frames_logits(model, rec: tsd.Records, count: int, transform, device) ->
     return np.concatenate(out)
 
 
-def train(device: torch.device, dataset: str = tsd.DEFAULT_NAME) -> None:
-    out = exp_dir(dataset) / RUN
+def train(device: torch.device, dataset: str = tsd.DEFAULT_NAME, patience: int = PATIENCE) -> None:
+    out = exp_dir(dataset, patience) / RUN
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(SEED)
     parts = {p: sampled_frames(tsd.load(p, dataset), rng) for p in ("train", "val", "test")}
     stft = StftConfig(n_fft=N_FFT)
     transform = partial(log_spectrogram, cfg=stft)
 
-    cfg = TrainConfig(seed=SEED)
+    cfg = TrainConfig(seed=SEED, patience=patience)
     torch.manual_seed(cfg.seed)
     model = SpectrogramCNN(len(tsd.CLASSES)).to(device)
     dev = {
@@ -233,8 +238,8 @@ def measured_bandwidth(rec: tsd.Records) -> dict:
     }
 
 
-def analyze(dataset: str = tsd.DEFAULT_NAME) -> dict:
-    out = exp_dir(dataset) / RUN
+def analyze(dataset: str = tsd.DEFAULT_NAME, patience: int = PATIENCE) -> dict:
+    out = exp_dir(dataset, patience) / RUN
     with np.load(out / "logits.npz") as d:
         val_z, val_y = torch.from_numpy(d["val_logits"]), torch.from_numpy(d["val_y"])
         test_z = torch.from_numpy(d["test_logits"]).double()
@@ -417,17 +422,21 @@ def main() -> None:
     parser.add_argument(
         "--dataset", default=tsd.DEFAULT_NAME, help="data set folder in <data_dir> (%(default)s)"
     )
+    parser.add_argument(
+        "--patience", type=int, default=PATIENCE,
+        help="early-stopping patience, epochs (%(default)s); other values go to <exp>_p<N>",
+    )  # fmt: skip
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    exp = exp_dir(args.dataset)
+    exp = exp_dir(args.dataset, args.patience)
     if not args.analyze_only:
         if (exp / RUN / "model.pt").exists():
             parser.error(f"{exp / RUN} already holds a trained model; use --analyze-only")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         torch.backends.cudnn.benchmark = True
-        train(device, args.dataset)
+        train(device, args.dataset, args.patience)
     torch.set_num_threads(4)
-    m = analyze(args.dataset)
+    m = analyze(args.dataset, args.patience)
     (exp / "metrics.json").write_text(json.dumps(m, indent=1))
     m = json.loads((exp / "metrics.json").read_text())  # string keys, as the plots expect
     plot_accuracy_vs_snr(m, exp / "accuracy_vs_k.png")
