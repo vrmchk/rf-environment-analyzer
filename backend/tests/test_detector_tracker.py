@@ -77,6 +77,29 @@ def test_tracker_opens_a_new_track_when_overlap_is_small() -> None:
     assert sorted(tr.active) == [1, 2]
 
 
+def test_neighbors_merged_into_one_interval_keep_their_tracks() -> None:
+    tr = Tracker(TrackerConfig(rho=0.5, max_gap=1, min_rows=3))
+    for row in range(3):
+        tr.update(row, [(100, 300), (310, 340)])  # a wide signal and a narrow neighbor
+    wide, narrow = tr.active.values()
+    for row in range(3, 8):  # their intervals merge for longer than max_gap
+        closed = tr.update(row, [(100, 340)])
+        assert closed == []
+    assert list(tr.active) == [wide.id, narrow.id]  # no third track for the merged interval
+    assert (narrow.k1, narrow.k2, narrow.last_row) == (310, 340, 7)  # bounds kept
+    assert (wide.k1, wide.k2) == (100, 340)  # the IoU match takes the interval
+    tr.update(8, [(100, 300), (310, 340)])
+    assert (wide.k1, wide.k2, narrow.k1, narrow.k2) == (100, 300, 310, 340)
+
+
+def test_pieces_of_a_new_signal_are_not_kept_by_containment() -> None:
+    tr = Tracker(TrackerConfig(rho=0.5, max_gap=1, min_rows=3))
+    tr.update(0, [(100, 120), (140, 160)])  # a wide signal first seen in two pieces
+    for row in range(1, 4):
+        tr.update(row, [(100, 300)])
+    assert [(t.k1, t.k2) for t in tr.active.values()] == [(100, 300)]
+
+
 def test_tracker_accumulates_power_for_bandwidth() -> None:
     tr = Tracker()
     p = row_with([(100, 120)])
