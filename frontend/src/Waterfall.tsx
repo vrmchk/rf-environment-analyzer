@@ -131,13 +131,21 @@ export const Waterfall = forwardRef<WaterfallHandle, { rowsPerS: number }>(funct
         label: ((scale.f0 + x * scale.fs) / 1e6).toFixed(3),
       }))
     : []
+  // The oldest row on screen: the bottom edge, or the start of the scene while the history
+  // is not full yet (the rows below it are empty).
+  const oldest = Math.max(0, now - span())
+  const filled = now > 0 ? (now - oldest) / span() : 1
 
   return (
     <div className="waterfall">
       <div className="waterfall-plot">
         <div className="time-axis">
-          <span>{now.toFixed(1)} s</span>
-          <span>{Math.max(0, now - span()).toFixed(1)} s</span>
+          <span className="time-now">{now.toFixed(1)} s</span>
+          {filled > 0.1 && (
+            <span className="time-oldest" style={{ top: `${filled * 100}%` }}>
+              {oldest.toFixed(1)} s
+            </span>
+          )}
         </div>
         <div className="waterfall-stack">
           <canvas ref={canvas} width={1024} height={HISTORY_ROWS} />

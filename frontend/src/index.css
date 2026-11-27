@@ -65,7 +65,21 @@ select {
 }
 
 .time-axis {
-  text-align: right;
+  display: block;
+  position: relative;
+}
+
+.time-axis span {
+  position: absolute;
+  right: 0;
+}
+
+.time-now {
+  top: 0;
+}
+
+.time-oldest {
+  transform: translateY(-100%);
 }
 
 .color-scale {
